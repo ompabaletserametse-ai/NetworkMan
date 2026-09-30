@@ -1,0 +1,409 @@
+import streamlit as st
+import plotly.graph_objects as go
+import pandas as pd
+import json
+import math
+from html import escape
+from pathlib import Path
+from statistics import mean
+from model import PROVINCES, SCENARIOS, fresh_state, site_list, trigger, advance, act, plan, paused, now, audit, ticket_update, series
+
+st.set_page_config(page_title='NOC · Network operations', page_icon='◈', layout='wide', initial_sidebar_state='expanded')
+CSS='''
+<style>
+:root {--brown:#3e3028;--line:#d8d2cb;}
+.stApp {background:#f2f0ed;color:#302b27;}
+[data-testid="stHeader"] {background:transparent;}
+[data-testid="stSidebar"] {background:#3e3028;min-width:220px;max-width:220px;}
+[data-testid="stSidebar"] * {color:#f7f4ef;}
+[data-testid="stSidebar"] button {background:#514137;border:1px solid #786459;text-align:left;}
+[data-testid="stSidebar"] button:hover {background:#725645;}
+[data-testid="stSidebar"] [data-testid="stSidebarUserContent"] {padding:1.2rem 1rem;}
+.block-container {padding:1.1rem 2rem 1rem;max-width:1900px;}
+[data-testid="stVerticalBlock"] {gap:.55rem;}
+h1 {font-size:2rem!important;padding:.1rem 0!important;letter-spacing:-.7px;}
+h2 {font-size:1.35rem!important;padding:.2rem 0!important;}
+h3 {font-size:1.05rem!important;padding:.15rem 0!important;}
+button {border-radius:7px!important;}
+[data-testid="stMetric"] {background:white;border:1px solid var(--line);border-radius:10px;padding:12px 16px;}
+[data-testid="stMetricValue"] {font-size:1.75rem;}
+[data-testid="stMetricLabel"] {font-size:.88rem;color:#76685e;}
+[data-testid="stElementContainer"]:has(.eyebrow) {margin-bottom:0;}
+.eyebrow {color:#80664f;font-size:12px;font-weight:700;letter-spacing:2px;}
+.subtle {color:#796d63;font-size:13px;}
+.panel {background:#fff;border:1px solid #d8d2cb;border-radius:10px;padding:15px 18px;margin:3px 0;}
+.badge {display:inline-block;padding:3px 9px;border-radius:20px;font-size:12px;font-weight:600;background:#e8ddd1;color:#574031;}
+.good {background:#e3efe7;color:#276746;}.warn {background:#fff0d6;color:#916011;}.bad {background:#f8e0dc;color:#a5372e;}.muted {background:#e8e5e1;color:#6e655f;}
+.grid-table {width:100%;border-collapse:collapse;font-size:14px;}
+.grid-table th {text-align:left;font-size:11px;letter-spacing:.6px;text-transform:uppercase;color:#857466;padding:9px;border-bottom:1px solid #ded8d1;}
+.grid-table td {padding:10px 9px;border-bottom:1px solid #ede9e3;}
+.small-table td {padding:7px 9px;}
+.rowtext {padding:8px 0;font-size:14px;}
+[data-testid="stHorizontalBlock"] {gap:1rem;}
+[data-testid="stForm"] {padding:12px;}
+[data-testid="stCaptionContainer"] p {font-size:12px;}
+</style>'''
+st.markdown(CSS,unsafe_allow_html=True)
+ss=st.session_state
+if 'model' not in ss: ss.model=fresh_state()
+if 'route' not in ss: ss.route=st.query_params.get('view','Overview')
+if 'province' not in ss: ss.province='All provinces'
+if 'site' not in ss: ss.site='GT-03'
+if 'device' not in ss: ss.device='GT-03-RTR'
+if 'incident' not in ss: ss.incident='INC-1001'
+if 'engineer' not in ss: ss.engineer='Demo engineer'
+if 'pending_context' in ss:
+ for k,v in ss.pop('pending_context').items():ss[k]=v
+s=ss.model
+PAGES=['Overview','Network Performance','Device Health','Incidents','Tickets','Reports']
+EXTRA=['Sites','Link detail','Device detail','Incident detail','Recovery','Ticket detail','Audit','Demo controls']
+if ss.route not in PAGES+EXTRA:ss.route='Overview'
+
+def go(page,**values):
+ ss.route=page
+ for k,v in values.items():ss[k]=v
+ st.query_params['view']=page
+
+
+def cmd(command,iid=None,**kwargs):
+ if act(s,s['incidents'][iid or ss.incident],command,ss.engineer,**kwargs):ss.notice='Action recorded.'
+ else:ss.notice='Action blocked: check state, approval, capacity, pause, or stability requirements.'
+
+
+def reset():
+ ss.model=fresh_state();ss.route='Overview';ss.province='All provinces';ss.site='GT-03';ss.incident='INC-1001';ss.device='GT-03-RTR'
+ for k in list(ss):
+  if k.startswith('pg_'):del ss[k]
+ st.query_params['view']='Overview'
+
+
+def badge(text):
+ cls='good' if text in ['Healthy','Online','Resolved','Closed','Available'] else 'bad' if text in ['Critical','Unavailable','Offline'] else 'muted' if text in ['Unknown','Stale','Unassigned'] else 'warn'
+ return f'<span class="badge {cls}">{escape(str(text))}</span>'
+
+
+def table(rows,small=False):
+ if not rows:st.caption('No matching records.');return
+ keys=list(rows[0]);html='<table class="grid-table '+('small-table' if small else '')+'"><thead><tr>'+''.join(f'<th>{escape(k)}</th>' for k in keys)+'</tr></thead><tbody>'
+ for row in rows:html+='<tr>'+''.join(f'<td>{escape(str(row[k]))}</td>' for k in keys)+'</tr>'
+ st.markdown(html+'</tbody></table>',unsafe_allow_html=True)
+
+
+def metrics(items):
+ for col,(label,value,helptext) in zip(st.columns(len(items)),items):
+  col.metric(label,value,help=helptext or None)
+
+
+def heading(title,subtitle=''):
+ st.markdown('<div class="eyebrow">NETWORK OPERATIONS CENTRE</div>',unsafe_allow_html=True)
+ st.title(title)
+ if subtitle:st.caption(subtitle)
+
+
+def paginate(rows,key,size=6):
+ pages=max(1,math.ceil(len(rows)/size));k='pg_'+key
+ ss[k]=min(ss.get(k,0),pages-1)
+ a,b,c=st.columns([1,3,1])
+ if a.button('← Previous',key=k+'prev',disabled=ss[k]==0):ss[k]-=1;st.rerun()
+ b.caption(f'Page {ss[k]+1} of {pages} · {len(rows)} records')
+ if c.button('Next →',key=k+'next',disabled=ss[k]>=pages-1):ss[k]+=1;st.rerun()
+ return rows[ss[k]*size:(ss[k]+1)*size]
+
+
+def selected_sites():return site_list(s,ss.province)
+
+def valid_links():return [s['links'][x['id']] for x in selected_sites() if s['links'][x['id']]['fresh'] and s['links'][x['id']]['up']]
+
+def fmt(value,unit='',digits=1):return 'No reading' if value is None else f'{value:.{digits}f}{unit}'
+
+
+def chart(points,label,height=235,threshold=None):
+ from plotly import graph_objects as pg
+ f=pg.Figure(pg.Scatter(x=[x[0] for x in points],y=[x[1] for x in points],mode='lines+markers',line=dict(color='#8a6347',width=2),marker=dict(size=4),connectgaps=False))
+ if threshold is not None:f.add_hline(y=threshold,line_dash='dot',line_color='#b58324',annotation_text='Demo threshold')
+ f.update_layout(height=height,margin=dict(l=35,r=10,t=10,b=35),paper_bgcolor='#fff',plot_bgcolor='#fff',font=dict(color='#514137',size=12),xaxis_title='Simulation minute',yaxis_title=label,showlegend=False)
+ f.update_xaxes(gridcolor='#f0ece7');f.update_yaxes(gridcolor='#f0ece7')
+ st.plotly_chart(f,width='stretch',config={'displayModeBar':False})
+
+
+@st.cache_data
+def boundaries():
+ p=Path(__file__).with_name('provinces.geojson')
+ return json.loads(p.read_text()) if p.exists() else None
+
+
+def map_view(rows,height=400):
+ from plotly import graph_objects as pg
+ f=pg.Figure();geo=boundaries()
+ if geo:
+  for feature in geo['features']:
+   geom=feature['geometry'];polys=geom['coordinates'] if geom['type']=='MultiPolygon' else [geom['coordinates']]
+   for poly in polys:
+    outer=poly[0]
+    f.add_trace(pg.Scatter(x=[p[0] for p in outer],y=[p[1] for p in outer],mode='lines',fill='toself',fillcolor='#e8e3dc',line=dict(color='#b9aaa0',width=.7),hoverinfo='skip',showlegend=False))
+ colours={'Healthy':'#3c8864','Degraded':'#bd8b26','Unavailable':'#b7493f','Stale':'#8d8580'}
+ for status,color in colours.items():
+  pts=[x for x in rows if ('Stale' if not x['fresh'] else x['status'])==status]
+  if not pts:continue
+  f.add_trace(pg.Scatter(x=[x['lon'] for x in pts],y=[x['lat'] for x in pts],mode='markers',name=status,marker=dict(color=color,size=10,line=dict(color='white',width=1)),text=[f"{x['id']} · {x['name']}<br>{status}<br>{x['affected']:,} affected customers" for x in pts],customdata=[x['id'] for x in pts],hovertemplate='%{text}<extra></extra>'))
+ if rows and ss.province!='All provinces':
+  xs=[x['lon'] for x in rows];ys=[x['lat'] for x in rows];pad=max(.18,(max(xs)-min(xs))*.15)
+  f.update_xaxes(range=[min(xs)-pad,max(xs)+pad]);f.update_yaxes(range=[min(ys)-pad,max(ys)+pad])
+ else:f.update_xaxes(range=[15.5,33.5]);f.update_yaxes(range=[-35.5,-21.5])
+ f.update_layout(height=height,margin=dict(l=0,r=0,t=0,b=15),paper_bgcolor='#fff',plot_bgcolor='#fff',legend=dict(orientation='h',y=0,x=0,font=dict(size=11)),clickmode='event+select')
+ f.update_xaxes(visible=False);f.update_yaxes(visible=False,scaleanchor='x',scaleratio=1.15)
+ event=st.plotly_chart(f,width='stretch',key='site_map',on_select='rerun',selection_mode='points',config={'displayModeBar':False})
+ if event.selection.points:
+  sid=event.selection.points[0].get('customdata')
+  if sid in s['sites']:
+   ss.pending_context=dict(route='Device Health',site=sid,province=s['sites'][sid]['province']);st.query_params['view']='Device Health';st.rerun()
+
+
+def inc_rows():
+ return [i for i in s['incidents'].values() if ss.province=='All provinces' or s['sites'][i['site']]['province']==ss.province]
+
+
+def event_rows(iid=None):
+ return [dict(Time=e['time'],Actor=e['actor'],Event=e['event']) for e in reversed(s['audit']) if iid is None or e['incident']==iid]
+
+
+with st.sidebar:
+ st.markdown('## ◈ NOC')
+ st.caption('Observe · Understand · Recover')
+ st.divider()
+ for page in PAGES:
+  st.button(page,key='nav_'+page,width='stretch',type='primary' if ss.route==page else 'secondary',on_click=go,args=(page,))
+ st.divider()
+ st.button('Demo controls',width='stretch',on_click=go,args=('Demo controls',))
+ st.caption(f'SIMULATION CLOCK · {now(s)} SAST')
+ st.button('Advance +5 minutes',width='stretch',on_click=advance,args=(s,))
+ if s['stop']:
+  st.error('Emergency stop active')
+ else:st.caption('Session-local simulated operations')
+ st.caption('All values and AI outputs are illustrative.')
+
+# Shared widgets render on every view, retaining context across navigation.
+a,b,c=st.columns([2,3,2])
+a.selectbox('Province',['All provinces']+list(PROVINCES),key='province')
+options=[x['id'] for x in selected_sites()]
+if ss.site not in options:ss.site=options[0]
+b.selectbox('Site',options,key='site',format_func=lambda sid:f"{sid} · {s['sites'][sid]['name']}")
+c.markdown(f'<div style="padding-top:31px;text-align:right"><span class="badge">SIMULATED DATA</span> <span class="subtle">{now(s)} SAST</span></div>',unsafe_allow_html=True)
+if ss.get('notice'):
+ st.caption(ss.pop('notice'))
+route=ss.route
+
+if route=='Overview':
+ rows=selected_sites();active=[i for i in inc_rows() if i['state']!='Resolved']
+ heading('Network overview',ss.province+' · Select a map marker to inspect its equipment')
+ metrics([('Sites available',f"{sum(x['status']!='Unavailable' and x['fresh'] for x in rows)} / {len(rows)}",'Current reachable sites; stale sites excluded from numerator.'),('Degraded sites',sum(x['status']=='Degraded' for x in rows),''),('Active incidents',len(active),''),('Affected customers',f"{sum(x['affected'] for x in rows):,}",'Fictional non-overlapping customer groups.')])
+ left,right=st.columns([1.6,1])
+ with left:
+  with st.container(border=True):
+   st.subheader('Geographic health');map_view(rows,340)
+   st.caption('Boundaries: geoBoundaries / OCHA ROSEA / South African Municipal Demarcation Board · CC BY 3.0 IGO')
+ with right:
+  with st.container(border=True):
+   st.subheader('Provincial health')
+   table([{'Province':p,'Available':f"{sum(x['fresh'] and x['status']!='Unavailable' for x in site_list(s,p))}/8",'Affected':sum(x['affected'] for x in site_list(s,p))} for p in PROVINCES],small=True)
+ a,b=st.columns([4,1]);a.subheader('Priority incidents');b.button('All incidents →',on_click=go,args=('Incidents',))
+ table([{'Incident':i['id'],'Issue':i['title'],'Site':i['site'],'Severity':i['severity'],'Customers':s['sites'][i['site']]['affected'],'State':i['state']} for i in sorted(active,key=lambda i:-s['sites'][i['site']]['affected'])[:2]],small=True)
+ st.button('Search all sites →',on_click=go,args=('Sites',))
+
+elif route=='Sites':
+ heading('Site directory','Search and filter sites; open equipment on a dedicated page')
+ a,b,c,d=st.columns(4)
+ query=a.text_input('Search name / ID').lower();technology=b.selectbox('Technology',['All','4G','5G']);status=c.selectbox('Condition',['All','Healthy','Degraded','Unavailable','Stale']);impact=d.selectbox('Customer impact',['All','Affected customers only'])
+ rows=[x for x in selected_sites() if (query in x['name'].lower() or query in x['id'].lower()) and (technology=='All' or technology==x['technology']) and (status=='All' or (status=='Stale' and not x['fresh']) or status==x['status']) and (impact=='All' or x['affected']>0)]
+ for x in paginate(rows,'sites',7):
+  a,b,c,d=st.columns([3,2,2,1]);a.write(f"**{x['id']} · {x['name']}**");b.write(x['technology']+' · '+('Stale' if not x['fresh'] else x['status']));c.write(f"{x['affected']:,} affected");d.button('Open →',key='site_'+x['id'],on_click=go,args=('Device Health',),kwargs={'site':x['id']})
+
+elif route=='Network Performance':
+ heading('Network performance',ss.province+' · Transport links; CPU is shown under Device Health')
+ links=valid_links();coverage=f'{len(links)}/{len(selected_sites())} fresh, available links';avg=lambda k:fmt(mean(x[k] for x in links)) if links else '—'
+ metrics([('Latency',avg('latency')+' ms','Arithmetic mean; '+coverage),('Packet loss',avg('loss')+'%','Arithmetic mean of link percentages; '+coverage),('Traffic',fmt(sum(x['traffic'] for x in links)/1000,' Gbps'),'Sum of sampled primary links; not unique end-to-end traffic.'),('Link utilisation',fmt(100*sum(x['traffic'] for x in links)/sum(x['capacity'] for x in links),'%') if links else '—','Capacity-weighted; '+coverage)])
+ st.caption(coverage+' · Select a site above to change the plotted link.')
+ a,b=st.columns(2)
+ with a:st.subheader(f'{ss.site} · Latency');chart(series(s,ss.site,'latency'),'ms',210,100)
+ with b:st.subheader(f'{ss.site} · Packet loss');chart(series(s,ss.site,'loss'),'%',210,2)
+ st.subheader('Transport links')
+ rows=[s['links'][x['id']] for x in selected_sites()]
+ for x in paginate(rows,'links',4):
+  a,b,c,d=st.columns([3,2,2,1]);a.write(f"**{x['id']} → {x['endpoint']}**");b.write('Stale' if not x['fresh'] else f"{fmt(x['latency'],' ms')} · {fmt(x['loss'],'% loss')}");c.write(f"{x['traffic']:.0f}/{x['capacity']} Mbps");d.button('Inspect →',key=x['id'],on_click=go,args=('Link detail',),kwargs={'site':x['site']})
+
+elif route=='Link detail':
+ l=s['links'][ss.site];heading(l['id']+' · Link detail',f"{ss.site} → {l['endpoint']} · Fictional alternate transport topology")
+ st.button('← Network performance',on_click=go,args=('Network Performance',))
+ metrics([('State','Stale' if not l['fresh'] else 'Up' if l['up'] else 'Down',''),('Traffic',fmt(l['traffic'],' Mbps'),''),('Capacity',f"{l['capacity']} Mbps",''),('Interface error rate',fmt(l['error'],'%'),'% of observed frames with interface errors; simulated.')])
+ a,b=st.columns(2)
+ with a:st.subheader('Traffic history');chart(series(s,ss.site,'traffic'),'Mbps',250)
+ with b:st.subheader('Interface errors');chart(series(s,ss.site,'error'),'%',250)
+ for i in inc_rows():
+  if i['site']==ss.site:st.button(i['id']+' · '+i['title'],on_click=go,args=('Incident detail',),kwargs={'incident':i['id']})
+
+elif route=='Device Health':
+ site=s['sites'][ss.site];devices=[d for d in s['equipment'].values() if d['site']==ss.site]
+ heading('Site equipment',site['name']+' · '+ss.site+' · Each equipment item opens a separate page')
+ metrics([('Equipment online',f"{sum(d['online'] and d['fresh'] for d in devices)} / 7",'Stale telemetry is not counted as confirmed online.'),('Warnings',sum(d['status']!='Healthy' for d in devices),''),('Mains power','Available' if site['mains'] else 'Failed',''),('Battery charge',fmt(site['charge'],'%',0),'')])
+ cols=st.columns([3,1.1,1.5,2,1.2])
+ for col,label in zip(cols,['EQUIPMENT','GROUP','STATUS','KEY READING','ACTION']):col.caption(label)
+ for d in devices:
+  a,b,c,e,f=st.columns([3,1.1,1.5,2,1.2])
+  a.markdown(f'<div class="rowtext"><b>{escape(d["label"])}</b><br><span class="subtle">{d["id"]}</span></div>',unsafe_allow_html=True)
+  b.markdown('<div class="rowtext">'+d['group']+'</div>',unsafe_allow_html=True)
+  c.markdown(badge('Stale' if not d['fresh'] else d['status']),unsafe_allow_html=True)
+  e.write(d['metric']+' · '+(fmt(d['value'],d['unit']) if d['fresh'] else 'Stale'))
+  f.button('Open device →',key=d['id'],on_click=go,args=('Device detail',),kwargs={'device':d['id']})
+ st.caption('7 equipment items · Simulated configuration: one baseband, three radio sectors, router, rectifier and battery.')
+
+elif route=='Device detail':
+ if ss.device not in s['equipment'] or s['equipment'][ss.device]['site']!=ss.site:ss.device=ss.site+'-RTR'
+ d=s['equipment'][ss.device];heading(d['label'],d['id']+' · '+s['sites'][d['site']]['name'])
+ st.button('← Site equipment',on_click=go,args=('Device Health',))
+ extra=('Memory usage',f"{d['memory']}%",'') if d['kind']=='RTR' else ('Temperature',f"{d['temperature']}°C",'')
+ metrics([('Status','Stale' if not d['fresh'] else d['status'],''),(d['metric'],fmt(d['value'],d['unit']),''),extra,('Last reading','25 min ago' if not d['fresh'] else 'Current demo step','Controlled simulated clock.')])
+ a,b=st.columns([1.5,1])
+ with a:
+  st.subheader(d['metric']+' history');chart(series(s,d['id'],'value',True),d['unit'],310,85 if d['kind']=='RTR' else None)
+ with b:
+  st.subheader('Related events');related=[i for i in inc_rows() if i['site']==d['site']]
+  if not related:st.info('No active equipment alarms in this scenario.')
+  for i in related[:2]:
+   st.markdown(badge(i['severity']),unsafe_allow_html=True);st.write(i['title']);st.button('Inspect '+i['id'],on_click=go,args=('Incident detail',),kwargs={'incident':i['id']})
+  if d['kind']=='BAT':st.caption('Estimated runtime: '+('unknown' if d['value'] is None else f"{d['value']*2:.0f} minutes at assumed constant load")+' · illustrative assumption')
+  if d['kind']=='RTR':st.caption('Uptime: 3 days 14 hours · illustrative inventory field')
+
+elif route=='Incidents':
+ heading('Incident centre','Correlated alarms · Customer impact · Operator response')
+ a,b=st.columns(2);severity=a.selectbox('Severity',['All','Critical','Major']);state=b.selectbox('State',['Active','All','Resolved'])
+ rows=[i for i in inc_rows() if (severity=='All' or i['severity']==severity) and (state=='All' or (state=='Resolved')==(i['state']=='Resolved'))]
+ for i in paginate(rows,'incidents',5):
+  a,b,c,d=st.columns([4,1.4,1.8,1]);a.write(f"**{i['id']} · {i['title']}**");a.caption(i['site']+' · '+s['sites'][i['site']]['province']);b.markdown(badge(i['severity']),unsafe_allow_html=True);c.write(i['state']);d.button('Open →',key='inc_'+i['id'],on_click=go,args=('Incident detail',),kwargs={'incident':i['id'],'site':i['site']})
+
+elif route in ['Incident detail','Recovery']:
+ if ss.incident not in s['incidents']:ss.incident=next(iter(s['incidents']))
+ i=s['incidents'][ss.incident];site=s['sites'][i['site']]
+ heading(i['id']+' · '+('Recovery' if route=='Recovery' else 'Diagnosis'),i['title']+' · '+i['site'])
+ a,b,c=st.columns([1,1,3]);a.button('← Incidents',on_click=go,args=('Incidents',));b.button('Diagnosis' if route=='Recovery' else 'Recovery →',on_click=go,args=('Incident detail' if route=='Recovery' else 'Recovery',))
+ metrics([('State',i['state'],''),('Affected customers',f"{site['affected']:,}",'Current simulated impact'),('Controller',i['controller'],''),('Priority service',site['priority'],'')])
+ if route=='Incident detail':
+  a,b=st.columns(2)
+  with a:
+   with st.container(border=True):
+    st.subheader('Likely cause');st.write(i['cause']);st.caption(i['method']+' · scripted demo output')
+    st.write('**Evidence:** '+i['evidence']);st.write('**Alternatives:** '+i['alternatives']);st.caption(f"Illustrative confidence: {i['confidence']}% · not a calibrated model probability")
+  with b:
+   with st.container(border=True):
+    st.subheader('Site signals');l=s['links'][i['site']]
+    table([{'Signal':'Mains','Reading':'Available' if site['mains'] else 'Failed'},{'Signal':'Battery','Reading':fmt(site['charge'],'%')},{'Signal':'Backhaul','Reading':'Up' if l['up'] else 'Down'},{'Signal':'Security','Reading':'Suspected tampering' if i['scenario']=='Suspected tampering' else 'No alarm'}],True)
+  st.subheader('Recent timeline');table(event_rows(i['id'])[:3],True)
+  a,b=st.columns(2)
+  with a:
+   if i['ticket']:st.button('Open maintenance ticket →',on_click=go,args=('Ticket detail',))
+  b.button('Full audit →',on_click=go,args=('Audit',))
+ else:
+  p=plan(s,i);a,b=st.columns([1.3,1])
+  with a:
+   st.subheader('Proposed response');st.write('**'+p['action']+'**');st.caption(p['reason'])
+   st.write(f"Alternate site: **{p['neighbor']}** · Spare: **{p['spare']:.0f} Mbps** · Required: **{p['need']} Mbps**")
+   st.caption('Alternative: retain current routing and dispatch an engineer. Radio coverage is not inferred from geographic proximity.')
+   x,y=st.columns(2);x.metric('Predicted affected after action',p['predicted']);y.metric('Observed in simulation',site['affected'])
+   a1,a2,a3=st.columns(3)
+   a1.button('Assess proposal',on_click=cmd,args=('assess',i['id']),disabled=i['state'] not in ['Assessing','Needs intervention'])
+   a2.button('Approve',on_click=cmd,args=('approve',i['id']),disabled=i['state']!='Awaiting approval' or bool(paused(s,i)) or not p['safe'])
+   a3.button('Reject',on_click=cmd,args=('reject',i['id']),disabled=i['state']!='Awaiting approval')
+   with st.form('modify'):
+    amount=st.number_input('Proposed traffic shift (Mbps)',100,400,i['desired'],50)
+    if st.form_submit_button('Update proposal',disabled=i['state'] not in ['Assessing','Awaiting approval','Needs intervention']):
+     i['desired']=amount;i['state']='Assessing';audit(s,f'Proposal modified: {amount} Mbps',i['id'],ss.engineer);st.rerun()
+  with b:
+   st.subheader('Operator control');st.caption(paused(s,i) or f"{i['risk']} risk · {i['stable']}/3 stability checks")
+   x,y=st.columns(2);x.button('Take manual control',on_click=cmd,args=('override',i['id']));y.button('Roll back',on_click=cmd,args=('rollback',i['id']),disabled=not i['before'])
+   with st.form('pause'):
+    x,y=st.columns(2);scope=x.selectbox('Pause scope',['Incident','Site','Province']);minutes=y.selectbox('Duration (minutes)',[5,15,30,60])
+    if st.form_submit_button('Pause automation'):
+     target={'Incident':i['id'],'Site':i['site'],'Province':site['province']}[scope];s['pauses'].append(dict(scope=target,until=s['minute']+minutes));audit(s,f'{scope} automation paused for {minutes} minutes',i['id'],ss.engineer);st.rerun()
+   confirm=st.checkbox('Confirm handover to automation')
+   st.button('Health check & hand back',on_click=cmd,args=('handover',i['id']),disabled=not confirm)
+   if st.button('EMERGENCY STOP',type='primary'):
+    s['stop']=True;audit(s,'Emergency stop: further automated actions blocked',i['id'],ss.engineer);st.rerun()
+   st.caption('Use Advance +5 minutes to execute and verify. Use Demo controls to release an emergency stop.')
+
+elif route=='Tickets':
+ heading('Field response','Faults requiring physical investigation or repair')
+ rows=[t for t in s['tickets'].values() if ss.province=='All provinces' or s['sites'][t['site']]['province']==ss.province]
+ for t in paginate(rows,'tickets',5):
+  a,b,c,d=st.columns([3,2,2,1]);a.write(f"**{t['id']} · {t['site']}**");b.write(t['owner']);c.write(t['status']);d.button('Open →',key=t['id'],on_click=go,args=('Ticket detail',),kwargs={'incident':t['incident'],'site':t['site']})
+ if not rows:st.info('No field tickets yet. Load a power failure, outage, or tampering scenario in Demo controls.')
+
+elif route=='Ticket detail':
+ i=s['incidents'][ss.incident];t=s['tickets'].get(i['id'])
+ if not t:heading('No maintenance ticket','This incident currently uses remote investigation.');st.button('← Tickets',on_click=go,args=('Tickets',))
+ else:
+  heading(t['id']+' · Field repair',t['site']+' · '+i['title']);st.button('← Tickets',on_click=go,args=('Tickets',))
+  a,b=st.columns(2)
+  with a:
+   st.write('**Suspected cause:** '+i['cause']);st.write('**Evidence:** '+i['evidence']);st.caption(f"Urgency: {i['severity']} · Customers initially affected: {i['affected']} · Linked incident: {i['id']}")
+   with st.form('ticketform'):
+    owner=st.text_input('Assigned engineer',t['owner']);status=st.selectbox('Dispatch status',['Open','Assigned','Dispatched','On site','Repair recorded'],index=['Open','Assigned','Dispatched','On site','Repair recorded'].index(t['status']) if t['status'] in ['Open','Assigned','Dispatched','On site','Repair recorded'] else 0);eta=st.text_input('Estimated restoration',t['eta']);note=st.text_input('Technician update')
+    if st.form_submit_button('Save update',disabled=t['closed']):
+     t.update(owner=owner,status=status,eta=eta);ticket_update(s,i,note or status);audit(s,'Ticket updated: '+(note or status),i['id'],ss.engineer);st.rerun()
+  with b:
+   st.subheader('Repair verification');st.write(f"Incident: **{i['state']}** · Stability: **{i['stable']}/3**")
+   st.button('Record physical repair',on_click=cmd,args=('repair',i['id']),disabled=i['repair'] or t['closed'])
+   st.button('Close ticket',on_click=cmd,args=('close',i['id']),disabled=i['state']!='Resolved' or not i['repair'] or i['stable']<3 or t['closed'])
+   st.caption('Record repair, then advance three simulation steps. Closure is blocked until stability is confirmed.')
+   st.subheader('Latest technician updates')
+   for note in t['updates'][-4:]:st.caption(note)
+
+elif route=='Reports':
+ heading('Operations report','Metrics derive from this session’s recorded events')
+ rows=inc_rows();resolved=[i for i in rows if i['resolved'] is not None];rest=[i['resolved']-i['start'] for i in resolved];overrides=[e for e in s['audit'] if e['event']=='Manual override taken'];repeats=len(rows)-len(set(i['site'] for i in rows))
+ metrics([('Mean detection delay',fmt(mean(i['detected']-i['start'] for i in rows),' min') if rows else '—','Measured from scenario fault time to detection.'),('Mean restoration',fmt(mean(rest),' min') if rest else '—','Resolved incidents only; temporary mitigation excluded.'),('Resolved / total',f'{len(resolved)} / {len(rows)}',''),('Manual overrides',sum(e['incident'] in {i['id'] for i in rows} for e in overrides),'Count within selected province.')])
+ st.caption(f'Repeat incidents in selected scope: {repeats}')
+ chosen=st.selectbox('Incident briefing',[i['id'] for i in rows] or ['None'])
+ if chosen!='None':
+  i=s['incidents'][chosen];site=s['sites'][i['site']]
+  recent=[e['event'] for e in s['audit'] if e['incident']==chosen][-3:]
+  briefing=f"{chosen} | {site['province']} / {site['name']}\n{site['affected']} customers currently affected. Service: {site['status']}. Recovery: {i['state']}.\nActions: {'; '.join(recent)}.\nNext: {'Monitor normal service' if i['state']=='Resolved' else 'Complete repair and verification' if i['repair'] else 'Review incident and recovery proposal'}."
+  st.text(briefing)
+  st.download_button('Download briefing',briefing,file_name=chosen+'.txt')
+  a,b=st.columns([3,1]);feedback=a.selectbox('Operator feedback',['Diagnosis correct','Incorrect diagnosis','Ineffective action','Needs investigation'])
+  if b.button('Record feedback'):
+   i['feedback']=feedback;audit(s,'Operator feedback: '+feedback,chosen,ss.engineer);st.success('Feedback recorded.')
+ st.button('Open audit history →',on_click=go,args=('Audit',))
+ st.download_button('Export session audit CSV',pd.DataFrame(s['audit']).to_csv(index=False),'noc_audit.csv','text/csv')
+
+elif route=='Audit':
+ heading('Audit history','Timestamped decisions, simulated actions, overrides and results')
+ ids=['All']+list(s['incidents']);iid=st.selectbox('Incident filter',ids)
+ table(paginate(event_rows(None if iid=='All' else iid),'audit',8),True)
+ st.button('← Reports',on_click=go,args=('Reports',))
+
+elif route=='Demo controls':
+ heading('Demonstration controls','Each browser session has independent state. Advance time explicitly; Reset starts a new demonstration.')
+ a,b=st.columns(2)
+ with a:
+  st.subheader('Load a scenario');scenario=st.selectbox('Scenario',list(SCENARIOS))
+  st.caption('Target site: '+SCENARIOS[scenario][0])
+  if st.button('Start scenario',type='primary'):
+   if trigger(s,scenario):st.success('Scenario loaded. Open Incidents to investigate.')
+   else:st.info('This site already has an active incident.')
+  name=st.text_input('Operator name',value=ss.engineer,key='operator_input')
+  ss.engineer=name.strip() or 'Demo engineer'
+  auto=st.checkbox('Allow automatic low-risk recovery',value=s['auto'])
+  if auto!=s['auto']:s['auto']=auto;audit(s,'Low-risk automation '+('enabled' if auto else 'disabled'),actor=ss.engineer)
+  st.caption('Only the allowlisted router diagnostic-process restart is low risk. Advance time to run it.')
+  st.button('Reset demonstration',on_click=reset)
+ with b:
+  st.subheader('Verification and repair');iid=st.selectbox('Target incident',list(s['incidents']))
+  i=s['incidents'][iid]
+  if st.button('Make recovery verification fail',disabled=i['state'] not in ['Acting','Verifying'] or i['repair']):
+   i['quality_fail']=True;audit(s,'Injected service regression for rollback demonstration',iid,'Demo operator');st.success('The next verification step will trigger rollback.')
+  st.button('Record physical repair',key='demo_repair',on_click=cmd,args=('repair',iid),disabled=i['repair'] or i['state']=='Resolved')
+  confirm=st.checkbox('Confirm resuming after emergency stop')
+  if st.button('Release emergency stop',disabled=not s['stop'] or not confirm):
+   s['stop']=False;audit(s,'Emergency stop released after explicit confirmation',actor=ss.engineer);st.rerun()
+  if st.button('Clear timed pauses'):
+   s['pauses']=[];audit(s,'Timed pauses cleared by operator',actor=ss.engineer);st.success('Pauses cleared.')
+  st.caption('Backhaul alternatives are fictional connected paths. Radio coverage is never assumed from distance alone.')
