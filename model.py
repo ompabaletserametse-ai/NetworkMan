@@ -15,6 +15,10 @@ PROVINCES = {
  'Western Cape': [('Cape Town',-33.92,18.42),('Stellenbosch',-33.94,18.86),('Paarl',-33.73,18.96),('Worcester',-33.65,19.45),('George',-33.96,22.46),('Mossel Bay',-34.18,22.15),('Beaufort West',-32.35,22.58),('Vredenburg',-32.91,17.99)]}
 CODES = ['EC','FS','GT','KZN','LP','MP','NW','NC','WC']
 SCENARIOS = {
+ 'Congestion': ('GT-05','Transport congestion','Major','Demand forecasting and anomaly detection (proposed)','Traffic demand exceeds the preferred operating margin.', 'Utilisation, latency and packet loss rise together.', 'Interface fault; upstream restriction', 940),
+ 'High latency': ('FS-03','Excessive path latency','Major','Multivariate anomaly detection (proposed)','Delay on the primary transport path.', 'High latency despite moderate load and low interface errors.', 'Upstream queueing; longer route', 430),
+ 'Interface errors': ('MP-03','Persistent interface errors','Major','Error-pattern classification (proposed)','Possible interface or optical degradation.', 'Interface error rate is elevated while load is moderate.', 'Optical fault; connector issue; counter anomaly', 570),
+ 'Device offline': ('LP-02','Backhaul router offline','Critical','Dependency-aware alarm correlation (proposed)','Router is unreachable while mains remains available.', 'Router and primary backhaul are down; other equipment is powered.', 'Router hardware fault; local power feed fault', 760),
  'Packet loss': ('GT-03','Backhaul packet loss','Major','Isolation Forest (proposed)','Queue congestion on the primary transport link.', 'Link utilisation and loss increased together; optical alarm absent.', 'Optical degradation; upstream policing', 820),
  'High router CPU': ('WC-02','Router CPU saturation','Major','Multivariate anomaly detection (proposed)','Excess control-plane workload.', 'CPU 94%; memory stable; interfaces remain up.', 'Routing update burst; software defect', 350),
  'Power failure': ('EC-02','Mains failure / battery depletion','Critical','Time-series runtime forecasting (proposed)','Mains supply failed; battery is discharging.', 'Mains absent; rectifier supply lost; battery charge falling.', 'Rectifier fault; battery sensor error', 1200),
@@ -65,6 +69,12 @@ def trigger(s,scenario):
  s['incidents'][iid]=i
  site=s['sites'][sid];site.update(status='Degraded',affected=affected,stable=0)
  if scenario=='Packet loss': s['links'][sid].update(loss=4.8,latency=128,traffic=930,error=.3)
+ elif scenario=='Congestion': s['links'][sid].update(loss=3.6,latency=115,traffic=960,error=.04)
+ elif scenario=='High latency': s['links'][sid].update(latency=145,loss=.4,error=.03)
+ elif scenario=='Interface errors': s['links'][sid].update(error=1.2,loss=2.4,latency=42)
+ elif scenario=='Device offline':
+  s['equipment'][sid+'-RTR'].update(online=False,status='Offline',value=None);site['status']='Unavailable'
+  s['links'][sid].update(up=False,traffic=0,latency=None,loss=None,error=None)
  elif scenario=='High router CPU': s['equipment'][sid+'-RTR'].update(value=94,status='Warning')
  elif scenario=='Power failure':
   site.update(mains=False,charge=24.);s['equipment'][sid+'-BAT'].update(value=24,status='Warning');s['equipment'][sid+'-PWR'].update(status='Critical',value=48.)
@@ -75,7 +85,7 @@ def trigger(s,scenario):
   s['equipment'][sid+'-BAT'].update(online=False,value=None,status='Critical');site['charge']=None
  audit(s,f'Fault detected: {title}',iid)
  audit(s,'Related alarms grouped; simulated diagnosis recorded',iid)
- if scenario in ['Power failure','Insufficient capacity','Suspected tampering']:
+ if scenario in ['Power failure','Insufficient capacity','Suspected tampering','Interface errors','Device offline']:
   s['tickets'][iid]=dict(id=f'TKT-{len(s["tickets"])+201}',incident=iid,site=sid,owner='Unassigned',status='Open',eta='Not set',updated=now(s),updates=[f'{now(s)} · Confirmed fault; investigation required.'],closed=False)
   i['ticket']=True;audit(s,'Field ticket created',iid)
  snapshot(s)
@@ -92,14 +102,18 @@ def paused(s,i):
 def plan(s,i):
  sid=i['site'];neighbor=s['links'][sid]['endpoint'];link=s['links'][neighbor]
  need=i['desired'];spare=max(0,link['capacity']-link['traffic'])
- eligible=i['scenario'] not in ['Power failure','Suspected tampering']
+ eligible=i['scenario'] not in ['Power failure','Suspected tampering','Interface errors','Device offline']
  safe=eligible and link['up'] and link['fresh'] and spare>=need
+ if i['scenario']=='Congestion':
+  source=s['links'][sid]
+  safe=safe and (source['traffic']-need)/source['capacity']<=.8 and (link['traffic']+need)/link['capacity']<=.8
  if i['scenario']=='High router CPU': safe=True;reason='Allowlisted diagnostic process restart; no traffic migration.'
  elif not eligible: reason='Field repair required; neighbouring radio coverage has not been validated.'
  elif not link['up'] or not link['fresh']: reason='Alternate link is down or has stale telemetry.'
  elif spare<need: reason=f'Insufficient spare capacity: {spare:.0f} Mbps available, {need} Mbps required.'
+ elif i['scenario']=='Congestion' and not safe: reason='The shift must leave both paths at or below the 80% demo operating limit.'
  else: reason='Fictional alternate transport path is available; reserved capacity stays within its limit.'
- return dict(neighbor=neighbor,need=need,spare=spare,safe=safe,reason=reason,action='Restart allowlisted diagnostic process' if i['scenario']=='High router CPU' else 'Shift traffic to alternate backhaul path',predicted=0 if safe else i['affected'])
+ return dict(neighbor=neighbor,need=need,spare=spare,safe=safe,reason=reason,action=('Inspect and repair affected equipment' if not eligible else 'Restart allowlisted diagnostic process' if i['scenario']=='High router CPU' else 'Shift traffic to alternate backhaul path'),predicted=0 if safe else i['affected'])
 
 
 def resolve(s,i):
@@ -167,8 +181,8 @@ def advance(s):
      if d['site']==sid:d.update(online=False,status='Offline',value=None)
     s['links'][sid].update(up=False,traffic=0,latency=None,loss=None,error=None)
   if paused(s,i):continue
-  if i['state']=='Assessing':act(s,i,'assess')
-  if s['auto'] and i['risk']=='Low' and i['controller']=='Automation' and i['state']=='Awaiting approval':
+  if i['state']=='Assessing' and not i.get('guided'):act(s,i,'assess')
+  if s['auto'] and not i.get('guided') and i['risk']=='Low' and i['controller']=='Automation' and i['state']=='Awaiting approval':
    act(s,i,'approve','Automation (allowlisted low risk)')
   if i['state']=='Acting':
    p=plan(s,i)
@@ -181,11 +195,19 @@ def advance(s):
    site.update(affected=0,status='Degraded');i['state']='Verifying';i['stable']=0
    audit(s,'Simulated action executed; verification started',i['id']);ticket_update(s,i,'Recovery action executed.')
   elif i['state']=='Verifying':
+   if i.get('issue_analysis'):
+    from issues import checks
+    if not all(ok for _,ok in checks(s,i)):
+     if i['before']:act(s,i,'rollback','Verification guard')
+     else:i['state']='Needs intervention';audit(s,'Verification failed: measured targets unmet',i['id'])
+     i['issue_analysis']['result']='Failed';continue
    if i['quality_fail'] and i['before']:
     act(s,i,'rollback','Verification guard');continue
    i['stable']+=1;site['stable']=i['stable'];audit(s,f'Stability check {i["stable"]}/3 passed',i['id'])
    if i['stable']>=3:
-    if i['route'] and not i['repair']:
+    if i['route'] and i['scenario']=='Congestion':
+     audit(s,'Balanced routing retained; service targets verified',i['id']);resolve(s,i)
+    elif i['route'] and not i['repair']:
      i['state']='Mitigated';site['status']='Degraded';audit(s,'Service restored on alternate path; original fault remains',i['id'])
     else:
      if i['route']:

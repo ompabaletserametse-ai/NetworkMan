@@ -1,6 +1,7 @@
 import streamlit as st
 import plotly.graph_objects as go
 import pandas as pd
+import issues
 import json
 import math
 from html import escape
@@ -55,8 +56,8 @@ if 'engineer' not in ss: ss.engineer='Demo engineer'
 if 'pending_context' in ss:
  for k,v in ss.pop('pending_context').items():ss[k]=v
 s=ss.model
-PAGES=['Overview','Network Performance','Device Health','Incidents','Tickets','Reports']
-EXTRA=['Sites','Link detail','Device detail','Incident detail','Recovery','Ticket detail','Audit','Demo controls']
+PAGES=['Overview','Issues & Response','Network Performance','Device Health','Incidents','Tickets','Reports']
+EXTRA=['Issue detail','Issue analysis','Issue recommendation','Issue result','Sites','Link detail','Device detail','Incident detail','Recovery','Ticket detail','Audit','Demo controls']
 if ss.route not in PAGES+EXTRA:ss.route='Overview'
 
 def go(page,**values):
@@ -165,6 +166,38 @@ def inc_rows():
 
 def event_rows(iid=None):
  return [dict(Time=e['time'],Actor=e['actor'],Event=e['event']) for e in reversed(s['audit']) if iid is None or e['incident']==iid]
+
+
+def open_issue(kind):
+ ss.issue_kind=kind
+ rows=issues.affected(s,kind,ss.province)
+ if rows:
+  ss.site=rows[0]['site'];ss.incident=rows[0]['incident'] or ''
+ else:ss.incident=''
+ go('Issue detail')
+
+
+def start_issue_demo(kind):
+ i=issues.ensure_demo(s,kind)
+ go('Issue detail',issue_kind=kind,incident=i['id'],site=i['site'],province=s['sites'][i['site']]['province'])
+
+
+def issue_action(command):
+ i=s['incidents'].get(ss.incident)
+ if not i:return
+ kind=ss.get('issue_kind','Congestion');ok=False
+ if command=='analyse':
+  ok=issues.analyse(s,i,kind,ss.engineer)
+  if ok:go('Issue analysis')
+ elif command=='review':
+  ok=issues.review(s,i,ss.engineer)
+  if ok:go('Issue recommendation')
+ elif command=='approve':
+  ok=issues.approve(s,i,ss.engineer)
+  if ok:go('Issue result')
+ elif command=='execute':ok=issues.execute(s,i)
+ elif command=='verify':ok=issues.verify(s,i,ss.engineer)
+ if not ok:ss.notice='Step blocked: check telemetry, approval, capacity, pause status, or verification results.'
 
 
 with st.sidebar:
@@ -407,3 +440,128 @@ elif route=='Demo controls':
   if st.button('Clear timed pauses'):
    s['pauses']=[];audit(s,'Timed pauses cleared by operator',actor=ss.engineer);st.success('Pauses cleared.')
   st.caption('Backhaul alternatives are fictional connected paths. Radio coverage is never assumed from distance alone.')
+
+elif route=='Issues & Response':
+ heading('Issues & Response','Six core problems · Evidence → Analysis → Recommendation → Measured result')
+ st.caption('Analysis uses explicit demonstration rules. Named AI methods describe the proposed production capability.')
+ names=list(issues.ISSUES)
+ for offset in (0,3):
+  for col,kind in zip(st.columns(3),names[offset:offset+3]):
+   spec=issues.ISSUES[kind];rows=issues.affected(s,kind,ss.province)
+   with col:
+    with st.container(border=True):
+     st.subheader(kind)
+     st.markdown(f"**{len(rows)} affected {'devices' if kind=='Device offline' else 'routers' if kind=='High CPU' else 'interfaces' if kind=='Interface errors' else 'links'}** · {ss.province}")
+     st.caption(('Offline equipment' if kind=='Device offline' else f"Demo alert limit: >{spec['threshold']}{spec['unit']}")+' · '+spec['scope'])
+     st.write(spec['response'])
+     st.caption(('Critical' if any(r['severity']=='Critical' for r in rows) else 'Major')+' · '+', '.join(sorted(set(r['status'] for r in rows))) if rows else 'No current threshold breaches')
+     st.button('Open '+kind,key='issuecard_'+kind,on_click=open_issue,args=(kind,),width='stretch')
+ runs=[i for i in s['incidents'].values() if i.get('issue_analysis') and (ss.province=='All provinces' or s['sites'][i['site']]['province']==ss.province)]
+ if runs:
+  last=runs[-1]
+  st.button('Latest analysed incident: '+last['id']+' · '+last['state'],on_click=go,args=('Issue result',),kwargs={'incident':last['id'],'issue_kind':last['issue_analysis']['kind'],'site':last['site']})
+ st.caption('An incident can breach several metrics; counts represent affected assets, not separate incidents. Stale readings are excluded.')
+
+elif route in ['Issue detail','Issue analysis','Issue recommendation','Issue result']:
+ kind=ss.get('issue_kind','Congestion');spec=issues.ISSUES[kind]
+ i=s['incidents'].get(ss.incident)
+ # A changed site selection must never show another site's incident under that header.
+ if i and i['site']!=ss.site:
+  i=next((x for x in reversed(list(s['incidents'].values())) if x['site']==ss.site and x['state']!='Resolved'),None)
+  ss.incident=i['id'] if i else ''
+ heading(kind+' · '+{'Issue detail':'Problem','Issue analysis':'Analysis','Issue recommendation':'Recommendation','Issue result':'Result'}[route],spec['scope']+' · '+ss.site+' · Simulated analysis, no trained model')
+ stages=[('Problem','Issue detail'),('Analysis','Issue analysis'),('Recommendation','Issue recommendation'),('Result','Issue result')]
+ nav=st.columns([1.3,1,1,1.3,1])
+ nav[0].button('← All issues',on_click=go,args=('Issues & Response',))
+ a=i.get('issue_analysis') if i else None
+ if a and a['kind']!=kind:a=None
+ for col,(label,dest) in zip(nav[1:],stages):
+  col.button(label,key='step_'+label,on_click=go,args=(dest,),disabled=dest!='Issue detail' and (not a or (dest=='Issue recommendation' and not a['reviewed'])),type='primary' if route==dest else 'secondary')
+ if not i:
+  left,right=st.columns(2)
+  with left:
+   with st.container(border=True):
+    st.subheader('What this issue means');st.write(spec['impact']);st.write('**Operator response:** '+spec['response'])
+    st.caption('No linked active incident for the selected site.')
+  with right:
+   with st.container(border=True):
+    st.subheader('How analysis would help');st.write('**Proposed method:** '+spec['method']);st.write('**Inputs:** '+spec['inputs']);st.caption(spec['purpose'])
+    st.button('Load '+kind+' example',on_click=start_issue_demo,args=(kind,),type='primary')
+    st.caption('Loads fictional measurements and switches to the example site. Time advances only when you click.')
+ elif route=='Issue detail':
+  value=issues.measure(s,kind,i['site']);site=s['sites'][i['site']]
+  metrics([('Current reading',('Online' if value else 'Offline') if kind=='Device offline' and value is not None else fmt(value,spec['unit']),''),('Demo target','Reachable' if kind=='Device offline' else f"≤{spec['threshold']}{spec['unit']}",'Illustrative operating limit, not a universal industry standard.'),('Customers affected',f"{site['affected']:,}",''),('Response status',i['state'],'')])
+  left,right=st.columns(2)
+  with left:
+   with st.container(border=True):
+    st.subheader('Problem and service impact');st.write(spec['impact']);st.write('**Incident:** '+i['id']+' · '+i['title']);st.caption('Severity: '+i['severity']+' · '+site['priority'])
+    st.button('Analyse evidence →',on_click=issue_action,args=('analyse',),disabled=i['state'] not in ['Assessing','Awaiting approval','Needs intervention'],type='primary')
+  with right:
+   with st.container(border=True):
+    st.subheader('Analysis approach');st.write('**Proposed AI method:** '+spec['method']);st.write('**Inputs:** '+spec['inputs']);st.caption(spec['purpose']);st.caption('Implemented now: deterministic rules evaluated against the current simulated readings.')
+    st.button('Load '+kind+' example',on_click=start_issue_demo,args=(kind,),disabled=i['site']==SCENARIOS[spec['scenario']][0] and i['state']!='Resolved')
+  rows=issues.affected(s,kind,ss.province)
+  st.caption(f'{len(rows)} affected assets in this province scope. Use the site selector above to inspect another site.')
+ elif not a:
+  st.info('Open Problem and analyse the evidence first.')
+ elif route=='Issue analysis':
+  left,right=st.columns(2)
+  with left:
+   with st.container(border=True):
+    st.subheader('1 · Evidence used')
+    labels={'latency':('Latency','ms'),'loss':('Packet loss','%'),'utilisation':('Link utilisation','%'),'error':('Interface errors','%'),'cpu':('Router CPU','%'),'online':('Router online','')}
+    keys=['cpu','online','utilisation','latency'] if kind=='High CPU' else ['online','cpu','latency','loss'] if kind=='Device offline' else ['utilisation','latency','loss','error']
+    table([{'Measurement':labels[k][0],'At analysis':('Yes' if a['before'][k] else 'No') if k=='online' else fmt(a['before'][k],labels[k][1],2 if k in ['error','loss'] else 1)} for k in keys],True)
+    st.caption('Captured at '+a['time']+' · Snapshot retained for the before/after comparison.')
+  with right:
+   with st.container(border=True):
+    st.subheader('2 · Reasoning and uncertainty');st.write('**'+a['cause']+'**');st.write(a['rule']);st.caption('Alternative: '+a['alternative']);st.caption('No calibrated confidence score: this is rule-based demonstration evidence.')
+    st.write('**Proposed AI:** '+a['method']);st.caption(spec['purpose'])
+  st.button('Review recommendation →',on_click=issue_action,args=('review',),type='primary')
+  st.caption('Analysis and recommendations are recorded in the incident audit history.')
+ elif route=='Issue recommendation':
+  p=plan(s,i);left,right=st.columns(2)
+  with left:
+   with st.container(border=True):
+    st.subheader('3 · Recommended action');st.write('**'+p['action']+'**');st.write(p['reason'])
+    st.caption('Why: '+a['cause']+' · Alternative: retain current operation and investigate physically.')
+    st.caption('Approval: '+i['risk']+' risk · '+('Human approval required' if i['risk']=='High' else 'Allowlisted demo action'))
+    if i['ticket']:st.button('Open repair ticket →',on_click=go,args=('Ticket detail',))
+  with right:
+   with st.container(border=True):
+    st.subheader('Capacity and expected effect')
+    if kind not in ['High CPU','Device offline','Interface errors']:
+     source=s['links'][i['site']];target=s['links'][p['neighbor']]
+     table([{'Path':'Primary '+i['site'],'Now':fmt(source['traffic']/source['capacity']*100,'%'),'Projected':fmt((source['traffic']-p['need'])/source['capacity']*100,'%')},{'Path':'Alternate '+p['neighbor'],'Now':fmt(target['traffic']/target['capacity']*100,'%'),'Projected':fmt((target['traffic']+p['need'])/target['capacity']*100,'%')}],True)
+     st.caption(f"Move {p['need']} Mbps on the fictional connected path. Congestion targets require both paths ≤80%.")
+    st.write('**Projected affected customers:** '+str(p['predicted']));st.caption('Illustrative estimate; success must be checked after execution.')
+  x,y,z=st.columns(3)
+  x.button('Approve action →',on_click=issue_action,args=('approve',),disabled=not a['reviewed'] or i['state']!='Awaiting approval' or not p['safe'] or bool(paused(s,i)),type='primary')
+  y.button('Reject proposal',on_click=cmd,args=('reject',i['id']),disabled=i['state']!='Awaiting approval')
+  z.button('Operator controls →',on_click=go,args=('Recovery',))
+  st.caption(paused(s,i) or 'No background execution: approve here, then execute on the Result page.')
+ elif route=='Issue result':
+  current=issues.capture(s,i)
+  metrics([('Response state',i['state'],''),('Stable samples',f"{i['stable']} / 3",''),('Affected before',a['before']['customers'],''),('Affected now',current['customers'],'')])
+  left,right=st.columns(2)
+  with left:
+   with st.container(border=True):
+    st.subheader('4 · Measured comparison')
+    units={'latency':' ms','loss':'%','utilisation':'%','error':'%','cpu':'%'}
+    keys=['cpu','latency','loss'] if kind=='High CPU' else ['error','loss','latency'] if kind=='Interface errors' else ['utilisation','latency','loss','error']
+    table([{'Metric':k.title(),'Before':fmt(a['before'][k],units[k],2 if k in ['error','loss'] else 1),'Current':fmt(current[k],units[k],2 if k in ['error','loss'] else 1)} for k in keys],True)
+    if kind=='Device offline':st.write('Router: '+('Online' if a['before']['online'] else 'Offline')+' → '+('Online' if current['online'] else 'Offline'))
+    st.caption('Current values are also used by the map, network metrics and equipment pages.')
+  with right:
+   with st.container(border=True):
+    st.subheader('Verification checks')
+    for name,ok in issues.checks(s,i):st.write(('✓ ' if ok else '✕ ')+name)
+    st.caption('Three consecutive explicit verification steps are required. A failed check triggers rollback when a change snapshot exists.')
+    if i['state']=='Resolved':st.success('Verified. Congestion routing is retained.' if kind=='Congestion' else 'Verified. Incident resolved.')
+    elif i['state']=='Mitigated':st.info('Service restored on an alternate path. Original fault still needs repair.')
+    elif i['state']=='Needs intervention':st.warning('Recovery blocked or failed. Review the incident before another action.')
+  x,y,z=st.columns(3)
+  x.button('Execute approved action',on_click=issue_action,args=('execute',),disabled=i['state']!='Acting' or bool(paused(s,i)),type='primary')
+  y.button('Verify next sample (+5 min)',on_click=issue_action,args=('verify',),disabled=i['state']!='Verifying' or bool(paused(s,i)))
+  z.button('Open incident / audit →',on_click=go,args=('Incident detail',))
+  st.caption(paused(s,i) or 'Simulation only. Each execution or verification click advances the shared simulation by five minutes.')
