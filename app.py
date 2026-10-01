@@ -2,6 +2,7 @@ import streamlit as st
 import plotly.graph_objects as go
 import pandas as pd
 import issues
+import maintenance
 import json
 import math
 from html import escape
@@ -43,6 +44,33 @@ button {border-radius:7px!important;}
 [data-testid="stHorizontalBlock"] {gap:1rem;}
 [data-testid="stForm"] {padding:12px;}
 [data-testid="stCaptionContainer"] p {font-size:12px;}
+
+/* Consistent high-contrast light controls, including browser theme overrides. */
+.stApp {--text-color:#302b27;--background-color:#f2f0ed;--secondary-background-color:#ffffff;--primary-color:#745039;color-scheme:light;}
+[data-testid="stMain"] {color:#302b27!important;background:#f2f0ed!important;}
+[data-testid="stMain"] p, [data-testid="stMain"] label, [data-testid="stMain"] h1, [data-testid="stMain"] h2, [data-testid="stMain"] h3 {color:#302b27!important;}
+[data-testid="stCaptionContainer"] {opacity:1!important;}
+[data-testid="stMain"] [data-testid="stCaptionContainer"], [data-testid="stMain"] [data-testid="stCaptionContainer"] *, .subtle, .grid-table th {color:#61564d!important;opacity:1!important;-webkit-text-fill-color:#61564d!important;}
+[data-testid="stSidebar"] [data-testid="stCaptionContainer"], [data-testid="stSidebar"] [data-testid="stCaptionContainer"] * {color:#eee5da!important;opacity:1!important;-webkit-text-fill-color:#eee5da!important;}
+[data-testid="stMain"] [data-testid="stMetric"] {background:#fff!important;color:#302b27!important;}
+[data-testid="stMetricLabel"], [data-testid="stMetricValue"], [data-testid="stMetricValue"] div {color:#302b27!important;}
+[data-testid="stMain"] input, [data-testid="stMain"] textarea {color:#302b27!important;background:#fff!important;-webkit-text-fill-color:#302b27!important;caret-color:#302b27;}
+[data-testid="stMain"] [data-baseweb="input"], [data-testid="stMain"] [data-baseweb="textarea"] {background:#fff!important;color:#302b27!important;}
+[data-testid="stMain"] input::placeholder, [data-testid="stMain"] textarea::placeholder {color:#655b53!important;-webkit-text-fill-color:#655b53!important;opacity:1;}
+[data-testid="stMain"] [data-baseweb="select"]>div, [data-testid="stMain"] [data-baseweb="select"]>div>div {background:#fff!important;color:#302b27!important;}
+[data-baseweb="popover"] *, [data-baseweb="popover"], [data-baseweb="popover"] ul, [data-baseweb="popover"] li, [role="listbox"], [role="option"] {background:#fff!important;color:#302b27!important;}
+[role="option"]:hover,[aria-selected="true"][role="option"] {background:#e8ddd1!important;}
+[data-testid="stMain"] button {background:#fff!important;color:#3e3028!important;border:1px solid #ab9b8e!important;}
+[data-testid="stMain"] button p, [data-testid="stMain"] button span {color:inherit!important;}
+[data-testid="stMain"] button[kind="primary"] {background:#745039!important;color:#fff!important;}
+[data-testid="stMain"] button:disabled {background:#e3ddd5!important;color:#60554c!important;opacity:1!important;}
+[data-testid="stMain"] [data-testid="stForm"], [data-testid="stMain"] [data-testid="stVerticalBlockBorderWrapper"] {background:#fff;}
+[data-testid="stMain"] [data-testid="stAlert"] {background:#fff!important;color:#302b27!important;border:1px solid #ab9b8e;}
+[data-testid="stMain"] [data-testid="stCheckbox"] label, [data-testid="stMain"] [data-testid="stCheckbox"] span {color:#302b27!important;}
+[data-testid="stSidebar"] button[kind="primary"] {background:#e8ddd1!important;color:#3e3028!important;}
+[data-testid="stSidebar"] button[kind="primary"] p {color:#3e3028!important;}
+[data-testid="stMain"] svg {color:inherit;}
+
 </style>'''
 st.markdown(CSS,unsafe_allow_html=True)
 ss=st.session_state
@@ -56,8 +84,9 @@ if 'engineer' not in ss: ss.engineer='Demo engineer'
 if 'pending_context' in ss:
  for k,v in ss.pop('pending_context').items():ss[k]=v
 s=ss.model
-PAGES=['Overview','Issues & Response','Network Performance','Device Health','Incidents','Tickets','Reports']
-EXTRA=['Issue detail','Issue analysis','Issue recommendation','Issue result','Sites','Link detail','Device detail','Incident detail','Recovery','Ticket detail','Audit','Demo controls']
+maintenance.ensure(s)
+PAGES=['Overview','Issues & Response','Network Performance','Device Health','Incidents','Tickets','Maintenance','Reports']
+EXTRA=['Maintenance case','Technician findings','Maintenance watch','Preventive order','Issue detail','Issue analysis','Issue recommendation','Issue result','Sites','Link detail','Device detail','Incident detail','Recovery','Ticket detail','Audit','Demo controls']
 if ss.route not in PAGES+EXTRA:ss.route='Overview'
 
 def go(page,**values):
@@ -200,6 +229,17 @@ def issue_action(command):
  if not ok:ss.notice='Step blocked: check telemetry, approval, capacity, pause status, or verification results.'
 
 
+def load_fibre():
+ trigger(s,'Fibre damage')
+ i=next(i for i in reversed(list(s['incidents'].values())) if i['scenario']=='Fibre damage')
+ go('Maintenance case',incident=i['id'],site=i['site'],province=s['sites'][i['site']]['province'])
+
+
+def maintenance_tests():
+ i=s['incidents'][ss.incident]
+ ss.notice='Post-repair tests passed.' if maintenance.field_tests(s,i) else 'Tests failed or repair has not been recorded.'
+
+
 with st.sidebar:
  st.markdown('## ◈ NOC')
  st.caption('Observe · Understand · Recover')
@@ -267,6 +307,7 @@ elif route=='Network Performance':
 elif route=='Link detail':
  l=s['links'][ss.site];heading(l['id']+' · Link detail',f"{ss.site} → {l['endpoint']} · Fictional alternate transport topology")
  st.button('← Network performance',on_click=go,args=('Network Performance',))
+ if 'physical_up' in l:st.caption('Effective service path shown below. Original physical fibre: '+('UP' if l['physical_up'] else 'DOWN — field repair outstanding'))
  metrics([('State','Stale' if not l['fresh'] else 'Up' if l['up'] else 'Down',''),('Traffic',fmt(l['traffic'],' Mbps'),''),('Capacity',f"{l['capacity']} Mbps",''),('Interface error rate',fmt(l['error'],'%'),'% of observed frames with interface errors; simulated.')])
  a,b=st.columns(2)
  with a:st.subheader('Traffic history');chart(series(s,ss.site,'traffic'),'Mbps',250)
@@ -373,7 +414,9 @@ elif route=='Ticket detail':
  i=s['incidents'][ss.incident];t=s['tickets'].get(i['id'])
  if not t:heading('No maintenance ticket','This incident currently uses remote investigation.');st.button('← Tickets',on_click=go,args=('Tickets',))
  else:
-  heading(t['id']+' · Field repair',t['site']+' · '+i['title']);st.button('← Tickets',on_click=go,args=('Tickets',))
+  heading(t['id']+' · Field repair',t['site']+' · '+i['title'])
+  back,brief=st.columns(2);back.button('← Tickets',on_click=go,args=('Tickets',));brief.button('Maintenance evidence & technician brief →',on_click=go,args=('Maintenance case',))
+  m=maintenance.init_case(s,i)
   a,b=st.columns(2)
   with a:
    st.write('**Suspected cause:** '+i['cause']);st.write('**Evidence:** '+i['evidence']);st.caption(f"Urgency: {i['severity']} · Customers initially affected: {i['affected']} · Linked incident: {i['id']}")
@@ -383,9 +426,11 @@ elif route=='Ticket detail':
      t.update(owner=owner,status=status,eta=eta);ticket_update(s,i,note or status);audit(s,'Ticket updated: '+(note or status),i['id'],ss.engineer);st.rerun()
   with b:
    st.subheader('Repair verification');st.write(f"Incident: **{i['state']}** · Stability: **{i['stable']}/3**")
-   st.button('Record physical repair',on_click=cmd,args=('repair',i['id']),disabled=i['repair'] or t['closed'])
-   st.button('Close ticket',on_click=cmd,args=('close',i['id']),disabled=i['state']!='Resolved' or not i['repair'] or i['stable']<3 or t['closed'])
-   st.caption('Record repair, then advance three simulation steps. Closure is blocked until stability is confirmed.')
+   st.button('Record physical repair',on_click=cmd,args=('repair',i['id']),disabled=i['repair'] or t['closed'] or not all(m[k] for k in ['confirmed_cause','technician','action','evidence_ref']))
+   st.button('Close ticket',on_click=cmd,args=('close',i['id']),disabled=not maintenance.ready_to_close(s,i) or t['closed'])
+   if st.button('Run post-repair tests',disabled=not i['repair'] or t['closed']):
+    maintenance.field_tests(s,i);st.rerun()
+   st.caption('Record findings in the maintenance brief, record repair, pass post-repair tests, then advance three stability checks.')
    st.subheader('Latest technician updates')
    for note in t['updates'][-4:]:st.caption(note)
 
@@ -394,6 +439,9 @@ elif route=='Reports':
  rows=inc_rows();resolved=[i for i in rows if i['resolved'] is not None];rest=[i['resolved']-i['start'] for i in resolved];overrides=[e for e in s['audit'] if e['event']=='Manual override taken'];repeats=len(rows)-len(set(i['site'] for i in rows))
  metrics([('Mean detection delay',fmt(mean(i['detected']-i['start'] for i in rows),' min') if rows else '—','Measured from scenario fault time to detection.'),('Mean restoration',fmt(mean(rest),' min') if rest else '—','Resolved incidents only; temporary mitigation excluded.'),('Resolved / total',f'{len(resolved)} / {len(rows)}',''),('Manual overrides',sum(e['incident'] in {i['id'] for i in rows} for e in overrides),'Count within selected province.')])
  st.caption(f'Repeat incidents in selected scope: {repeats}')
+ restored=[i for i in rows if i.get('maintenance',{}).get('service_restored_at') is not None]
+ open_repairs=sum(i['ticket'] and not s['tickets'][i['id']]['closed'] for i in rows)
+ st.caption(f'Service restored before physical repair: {len(restored)} incidents · Maintenance tickets still open: {open_repairs}')
  chosen=st.selectbox('Incident briefing',[i['id'] for i in rows] or ['None'])
  if chosen!='None':
   i=s['incidents'][chosen];site=s['sites'][i['site']]
@@ -439,6 +487,7 @@ elif route=='Demo controls':
    s['stop']=False;audit(s,'Emergency stop released after explicit confirmation',actor=ss.engineer);st.rerun()
   if st.button('Clear timed pauses'):
    s['pauses']=[];audit(s,'Timed pauses cleared by operator',actor=ss.engineer);st.success('Pauses cleared.')
+  if i['ticket']:st.button('Record technician findings →',on_click=go,args=('Technician findings',),kwargs={'incident':iid,'site':i['site']})
   st.caption('Backhaul alternatives are fictional connected paths. Radio coverage is never assumed from distance alone.')
 
 elif route=='Issues & Response':
@@ -565,3 +614,113 @@ elif route in ['Issue detail','Issue analysis','Issue recommendation','Issue res
   y.button('Verify next sample (+5 min)',on_click=issue_action,args=('verify',),disabled=i['state']!='Verifying' or bool(paused(s,i)))
   z.button('Open incident / audit →',on_click=go,args=('Incident detail',))
   st.caption(paused(s,i) or 'Simulation only. Each execution or verification click advances the shared simulation by five minutes.')
+
+elif route=='Maintenance':
+ heading('Maintenance centre','Restore service · Repair the asset · Verify the work · Learn from the outcome')
+ cases=[i for i in inc_rows() if i['ticket']]
+ watch=[w for w in s['watch'].values() if ss.province=='All provinces' or s['sites'][w['site']]['province']==ss.province]
+ metrics([('Open repair tickets',sum(not s['tickets'][i['id']]['closed'] for i in cases),''),('Service mitigated / repair open',sum(i['state']=='Mitigated' and not s['tickets'][i['id']]['closed'] for i in cases),''),('Condition warnings',sum(maintenance.watch_result(w)['priority']=='High' for w in watch),'Demonstration condition rules; not predicted failure probabilities.')])
+ a,b,c=st.columns(3)
+ a.button('Load fibre-damage example',on_click=load_fibre,type='primary')
+ b.button('Predictive maintenance / condition watch →',on_click=go,args=('Maintenance watch',))
+ c.button('All field tickets →',on_click=go,args=('Tickets',))
+ st.subheader('Corrective maintenance')
+ if not cases:st.info('Load the fibre example to see evidence, a technician brief, traffic mitigation and physical repair tracked together.')
+ for i in paginate(cases,'maintenance',4):
+  t=s['tickets'][i['id']];a,b,c,d=st.columns([3,2,2,1])
+  a.write('**'+t['id']+' · '+i['title']+'**');a.caption(i['site'])
+  b.write('Service: '+i['state']);c.write('Repair: '+('Closed' if t['closed'] else 'Verifying' if i['repair'] else 'Outstanding'))
+  d.button('Brief →',key='maint_'+i['id'],on_click=go,args=('Maintenance case',),kwargs={'incident':i['id'],'site':i['site']})
+ st.caption('Traffic restoration does not close the repair ticket. Confirmed cause, corrective work, post-repair tests and stable service are required.')
+
+elif route in ['Maintenance case','Technician findings']:
+ i=s['incidents'].get(ss.incident);t=s['tickets'].get(ss.incident)
+ if not i or not t:
+  heading('Select a maintenance case');st.button('← Maintenance',on_click=go,args=('Maintenance',))
+ else:
+  m=maintenance.init_case(s,i);brief=maintenance.corrective_brief(s,i)
+  heading(t['id']+' · '+('Technician findings' if route=='Technician findings' else 'Maintenance brief'),i['site']+' · '+i['title'])
+  a,b,c,d=st.columns(4)
+  a.button('← Maintenance',on_click=go,args=('Maintenance',))
+  b.button('Evidence / repair plan',on_click=go,args=('Maintenance case',))
+  c.button('Technician findings',on_click=go,args=('Technician findings',))
+  d.button('Traffic recovery →',on_click=go,args=('Recovery',))
+  if route=='Maintenance case':
+   metrics([('Customer service','Restored on alternate' if i['state']=='Mitigated' else 'Restored' if s['sites'][i['site']]['affected']==0 else 'Affected',''),('Physical repair','Closed' if t['closed'] else 'Recorded / verify' if i['repair'] else 'Outstanding',''),('Cause','Field recorded' if m['confirmed_cause'] else 'Unconfirmed','')])
+   a,b=st.columns([1.15,1])
+   with a:
+    st.subheader('Failure evidence');st.caption('Captured at '+m['captured_at']+' · incident snapshot retained after repair')
+    table([{'Signal':label,'Observation':value,'Source':source} for label,value,source in brief['evidence']],True)
+    st.caption(brief['unknown'])
+    if i['scenario']=='Fibre damage':
+     if st.button('Attach simulated OTDR result',disabled=m['otdr_km'] is not None or t['closed']):
+      m['otdr_km']=8.2;audit(s,'Simulated OTDR event imported: 8.2 km from GT-06; physical cause unconfirmed',i['id'],ss.engineer);st.rerun()
+   with b:
+    st.subheader('Suggested corrective work');st.write('**Working diagnosis:** '+brief['cause'])
+    for n,step in enumerate(brief['steps'],1):st.write(f'{n}. {step}')
+    st.caption('Crew / kit: '+brief['kit'])
+    st.caption('Proposed AI: '+brief['method']+'. Current output is an explicit demonstration template.')
+   st.download_button('Download technician brief',maintenance.briefing(s,i),file_name=t['id']+'_brief.txt')
+  else:
+   a,b=st.columns([1.2,1])
+   with a:
+    with st.form('findings_form'):
+     st.subheader('Record actual field findings')
+     tech=st.text_input('Technician',m['technician'])
+     cause=st.text_input('Confirmed cause',m['confirmed_cause'],placeholder='e.g. fire-damaged fibre sheath and broken strands')
+     action=st.text_input('Corrective work performed',m['action'],placeholder='Describe the component repaired or replaced')
+     ref=st.text_input('Test / photo / work report reference',m['evidence_ref'],placeholder='Reference to supporting evidence; demo text only')
+     if st.form_submit_button('Save findings',disabled=t['closed']):
+      if maintenance.record_findings(s,i,cause,tech,action,ref):st.success('Findings saved. Record the repair and run post-repair tests.')
+      else:st.error('Complete all four fields.')
+   with b:
+    st.subheader('Repair and closure gates')
+    st.write('**1 · Field evidence:** '+('Recorded' if all(m[k] for k in ['confirmed_cause','technician','action','evidence_ref']) else 'Required'))
+    st.button('Record physical repair',key='maint_repair',on_click=cmd,args=('repair',i['id']),disabled=i['repair'] or t['closed'] or not all(m[k] for k in ['confirmed_cause','technician','action','evidence_ref']))
+    st.write('**2 · Post-repair tests:** '+('Passed' if m['tests'] else 'Awaiting measurements'))
+    st.button('Run post-repair tests',on_click=maintenance_tests,disabled=not i['repair'] or t['closed'])
+    st.write(f"**3 · Stability:** {i['stable']}/3 samples")
+    st.button('Verify next sample (+5 min)',on_click=advance,args=(s,),disabled=not m['tests'] or i['state']!='Verifying')
+    st.button('Close maintenance ticket',on_click=cmd,args=('close',i['id']),disabled=t['closed'] or not maintenance.ready_to_close(s,i),type='primary')
+    st.caption('Tests use simulated optical/link readings. Three stable checks restore primary routing and release temporary capacity. Closure retains the findings for future diagnosis.')
+   if m['test_values']:st.caption('Latest post-repair evidence: '+str(m['test_values']))
+
+elif route=='Maintenance watch':
+ heading('Predictive maintenance · Condition watch','Historical sample data → Explainable warning → Preventive work order')
+ st.button('← Maintenance',on_click=go,args=('Maintenance',))
+ watch=[w for w in s['watch'].values() if ss.province=='All provinces' or s['sites'][w['site']]['province']==ss.province]
+ if not watch:st.info('No demonstration histories in this province. Select All provinces to see the three condition examples.')
+ else:
+  selected=st.selectbox('Asset / condition',[w['id'] for w in watch],format_func=lambda k:s['watch'][k]['asset']+' · '+s['watch'][k]['kind'])
+  w=s['watch'][selected];r=maintenance.watch_result(w)
+  metrics([('Latest recorded sample',fmt(r['latest'],w['unit']),''),('Change over 7 days',fmt(r['change'],w['unit']),''),('Review priority',r['priority'],'Condition-based triage, not a failure probability.')])
+  a,b=st.columns(2)
+  with a:
+   st.subheader('Recorded condition history')
+   from plotly import graph_objects as pg
+   f=pg.Figure(pg.Scatter(x=list(range(-7,1)),y=w['values'],mode='lines+markers',line=dict(color='#745039',width=3)))
+   f.add_hline(y=w['limit'],line_dash='dot',line_color='#966511',annotation_text='Demo warning limit')
+   f.update_layout(height=240,margin=dict(l=35,r=15,t=10,b=40),paper_bgcolor='#fff',plot_bgcolor='#fff',font=dict(color='#302b27'),xaxis_title='Days before last recorded sample',yaxis_title=w['unit'])
+   st.plotly_chart(f,width='stretch',config={'displayModeBar':False})
+   st.caption('Separate historical maintenance dataset; these are not live device readings. Limits depend on actual equipment specifications.')
+  with b:
+   st.subheader('Why maintenance is recommended');st.write(w['rule']);st.write('**Suggested action:** '+w['action']);st.caption('Crew equipment: '+w['tools']);st.caption('Proposed AI: '+w['method'])
+   if st.button('Create / open preventive order',type='primary'):
+    maintenance.create_order(s,w,ss.engineer);go('Preventive order',watch_id=selected);st.rerun()
+   st.caption('No estimated failure date is claimed. Abrupt fire/cable cuts may have no detectable precursor. A production model needs labelled failure and repair histories.')
+
+elif route=='Preventive order':
+ key=ss.get('watch_id','WATCH-01');w=s['watch'][key];o=s['preventive_orders'].get(key)
+ heading('Preventive work order',w['asset']+' · '+w['kind']);st.button('← Condition watch',on_click=go,args=('Maintenance watch',))
+ if o:
+  a,b=st.columns(2)
+  with a:
+   st.write('**'+o['id']+' · '+o['status']+'**');st.write(w['action']);st.caption('Recommendation: '+maintenance.watch_result(w)['recommendation'])
+   with st.form('preventive_form'):
+    owner=st.text_input('Assigned technician',o['owner']);window=st.text_input('Planned work window',o['window']);status=st.selectbox('Work status',['Planned','Assigned','In progress','Completed'],index=['Planned','Assigned','In progress','Completed'].index(o['status']));notes=st.text_input('Work performed / outcome',o['notes'])
+    if st.form_submit_button('Save preventive order'):
+     if status=='Completed' and (not notes.strip() or not owner.strip() or owner=='Unassigned'):st.error('Completion requires an assigned technician and a recorded outcome.')
+     else:o.update(owner=owner,window=window,status=status,notes=notes);audit(s,'Preventive order '+o['id']+' updated: '+status,actor=ss.engineer);st.success('Work order updated.')
+  with b:
+   st.subheader('Follow-up');st.write('Collect new condition measurements after the work. A completed work order does not automatically clear the original warning.');st.caption('Record confirmed cause, work, parts and test outcomes to support later model training and evaluation.')
+   st.download_button('Download preventive brief','\n'.join([o['id'],w['asset'],w['rule'],w['action'],w['tools'],str(o)]),file_name=o['id']+'.txt')

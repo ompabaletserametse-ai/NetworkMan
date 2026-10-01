@@ -15,6 +15,7 @@ PROVINCES = {
  'Western Cape': [('Cape Town',-33.92,18.42),('Stellenbosch',-33.94,18.86),('Paarl',-33.73,18.96),('Worcester',-33.65,19.45),('George',-33.96,22.46),('Mossel Bay',-34.18,22.15),('Beaufort West',-32.35,22.58),('Vredenburg',-32.91,17.99)]}
 CODES = ['EC','FS','GT','KZN','LP','MP','NW','NC','WC']
 SCENARIOS = {
+ 'Fibre damage': ('GT-06','Fibre path interrupted / possible fire damage','Critical','Alarm correlation and fault localisation (proposed)','Physical fibre fault suspected; cause awaits inspection.', 'Loss of signal with powered endpoints; reported smoke is unconfirmed.', 'Cable cut; patch-lead disconnect; remote optic fault', 1500),
  'Congestion': ('GT-05','Transport congestion','Major','Demand forecasting and anomaly detection (proposed)','Traffic demand exceeds the preferred operating margin.', 'Utilisation, latency and packet loss rise together.', 'Interface fault; upstream restriction', 940),
  'High latency': ('FS-03','Excessive path latency','Major','Multivariate anomaly detection (proposed)','Delay on the primary transport path.', 'High latency despite moderate load and low interface errors.', 'Upstream queueing; longer route', 430),
  'Interface errors': ('MP-03','Persistent interface errors','Major','Error-pattern classification (proposed)','Possible interface or optical degradation.', 'Interface error rate is elevated while load is moderate.', 'Optical fault; connector issue; counter anomaly', 570),
@@ -68,7 +69,11 @@ def trigger(s,scenario):
  i=dict(id=iid,scenario=scenario,site=sid,title=title,severity=severity,method=method,cause=cause,evidence=evidence,alternatives=alternatives,affected=affected,confidence=87,state='Assessing',controller='Automation',start=s['minute']-1,detected=s['minute'],resolved=None,feedback='',ticket=False,repair=False,stable=0,route=False,before=None,allocation=0,reserved_on=None,desired=200,quality_fail=False,approval='',risk='Low' if scenario=='High router CPU' else 'High')
  s['incidents'][iid]=i
  site=s['sites'][sid];site.update(status='Degraded',affected=affected,stable=0)
- if scenario=='Packet loss': s['links'][sid].update(loss=4.8,latency=128,traffic=930,error=.3)
+ if scenario=='Fibre damage':
+  site['status']='Unavailable';s['links'][sid].update(up=False,physical_up=False,rx_dbm=-35.,tx_dbm=-1.,traffic=0,latency=None,loss=None,error=None)
+  i['desired']=600
+  neighbor=s['links'][sid]['endpoint'];s['links'][neighbor].update(capacity=2000,traffic=600)
+ elif scenario=='Packet loss': s['links'][sid].update(loss=4.8,latency=128,traffic=930,error=.3)
  elif scenario=='Congestion': s['links'][sid].update(loss=3.6,latency=115,traffic=960,error=.04)
  elif scenario=='High latency': s['links'][sid].update(latency=145,loss=.4,error=.03)
  elif scenario=='Interface errors': s['links'][sid].update(error=1.2,loss=2.4,latency=42)
@@ -85,9 +90,11 @@ def trigger(s,scenario):
   s['equipment'][sid+'-BAT'].update(online=False,value=None,status='Critical');site['charge']=None
  audit(s,f'Fault detected: {title}',iid)
  audit(s,'Related alarms grouped; simulated diagnosis recorded',iid)
- if scenario in ['Power failure','Insufficient capacity','Suspected tampering','Interface errors','Device offline']:
+ if scenario in ['Power failure','Insufficient capacity','Suspected tampering','Interface errors','Device offline','Fibre damage']:
   s['tickets'][iid]=dict(id=f'TKT-{len(s["tickets"])+201}',incident=iid,site=sid,owner='Unassigned',status='Open',eta='Not set',updated=now(s),updates=[f'{now(s)} · Confirmed fault; investigation required.'],closed=False)
   i['ticket']=True;audit(s,'Field ticket created',iid)
+  from maintenance import init_case
+  init_case(s,i)
  snapshot(s)
  return True
 
@@ -103,7 +110,8 @@ def plan(s,i):
  sid=i['site'];neighbor=s['links'][sid]['endpoint'];link=s['links'][neighbor]
  need=i['desired'];spare=max(0,link['capacity']-link['traffic'])
  eligible=i['scenario'] not in ['Power failure','Suspected tampering','Interface errors','Device offline']
- safe=eligible and link['up'] and link['fresh'] and spare>=need
+ safe=eligible and link['up'] and link['fresh'] and link.get('physical_up',True) and spare>=need
+ if i['scenario']=='Fibre damage':safe=safe and (link['traffic']+need)/link['capacity']<=.8
  if i['scenario']=='Congestion':
   source=s['links'][sid]
   safe=safe and (source['traffic']-need)/source['capacity']<=.8 and (link['traffic']+need)/link['capacity']<=.8
@@ -111,6 +119,7 @@ def plan(s,i):
  elif not eligible: reason='Field repair required; neighbouring radio coverage has not been validated.'
  elif not link['up'] or not link['fresh']: reason='Alternate link is down or has stale telemetry.'
  elif spare<need: reason=f'Insufficient spare capacity: {spare:.0f} Mbps available, {need} Mbps required.'
+ elif i['scenario']=='Fibre damage' and not safe: reason='Alternate transport must be available and remain below 80% utilisation.'
  elif i['scenario']=='Congestion' and not safe: reason='The shift must leave both paths at or below the 80% demo operating limit.'
  else: reason='Fictional alternate transport path is available; reserved capacity stays within its limit.'
  return dict(neighbor=neighbor,need=need,spare=spare,safe=safe,reason=reason,action=('Inspect and repair affected equipment' if not eligible else 'Restart allowlisted diagnostic process' if i['scenario']=='High router CPU' else 'Shift traffic to alternate backhaul path'),predicted=0 if safe else i['affected'])
@@ -150,6 +159,11 @@ def act(s,i,command,actor='Engineer',**kwargs):
   audit(s,'Change rolled back; human intervention required',i['id'],actor)
  elif command=='repair':
   if i['state']=='Resolved':return False
+  if i['ticket']:
+   from maintenance import init_case
+   m=init_case(s,i)
+   if not all(m[k] for k in ['confirmed_cause','technician','action','evidence_ref']):return False
+   m['repair_recorded_at']=s['minute'];m['tests']=False
   site.update(mains=True,charge=86.,fresh=True)
   for d in s['equipment'].values():
    if d['site']==sid:d.update(online=True,status='Healthy',fresh=True)
@@ -157,11 +171,13 @@ def act(s,i,command,actor='Engineer',**kwargs):
   s['equipment'][sid+'-BBU']['value']=48
   for rk in ['RU1','RU2','RU3']:s['equipment'][sid+'-'+rk]['value']=44
   s['links'][sid].update(up=True,loss=.2,latency=28,error=.03,fresh=True)
-  if not i['route']:s['links'][sid]['traffic']=500
+  if i['scenario']=='Fibre damage':s['links'][sid].update(physical_up=True,rx_dbm=-8.,tx_dbm=-1.)
+  if not i['route']:s['links'][sid]['traffic']=i.get('maintenance',{}).get('pre_fault_traffic',500)
   i.update(repair=True,stable=0,state='Verifying');site.update(status='Degraded',stable=0)
   audit(s,'Physical repair recorded; three stability checks required',i['id'],actor);ticket_update(s,i,'Repair complete; stability checks started.')
  elif command=='close':
-  if i['state']!='Resolved' or not i['repair'] or i['stable']<3:return False
+  from maintenance import ready_to_close
+  if not ready_to_close(s,i):return False
   s['tickets'][i['id']].update(status='Closed',closed=True);audit(s,'Ticket closed after stable repair',i['id'],actor)
  snapshot(s)
  return True
@@ -203,15 +219,23 @@ def advance(s):
      i['issue_analysis']['result']='Failed';continue
    if i['quality_fail'] and i['before']:
     act(s,i,'rollback','Verification guard');continue
+   if i['ticket'] and i['repair'] and not i['maintenance']['tests']:
+    audit(s,'Verification waiting for post-repair test evidence',i['id']);continue
+   if i['ticket'] and i['repair']:
+    from maintenance import postrepair_ok
+    if not postrepair_ok(s,i):
+     i['state']='Needs intervention';i['maintenance']['tests']=False;audit(s,'Post-repair readings regressed; verification stopped',i['id']);continue
    i['stable']+=1;site['stable']=i['stable'];audit(s,f'Stability check {i["stable"]}/3 passed',i['id'])
    if i['stable']>=3:
     if i['route'] and i['scenario']=='Congestion':
      audit(s,'Balanced routing retained; service targets verified',i['id']);resolve(s,i)
     elif i['route'] and not i['repair']:
-     i['state']='Mitigated';site['status']='Degraded';audit(s,'Service restored on alternate path; original fault remains',i['id'])
+     i['state']='Mitigated';site['status']='Degraded'
+     if i.get('maintenance'):i['maintenance']['service_restored_at']=s['minute']
+     audit(s,'Service restored on alternate path; original fault remains',i['id'])
     else:
      if i['route']:
-      s['links'][i['reserved_on']]['traffic']-=i['allocation'];s['links'][sid]['traffic']+=i['allocation'];i.update(route=False,allocation=0,reserved_on=None)
+      s['links'][i['reserved_on']]['traffic']-=i['allocation'];s['links'][sid]['traffic']=(i['maintenance']['pre_fault_traffic'] if i.get('maintenance') else s['links'][sid]['traffic']+i['allocation']);i.update(route=False,allocation=0,reserved_on=None)
       audit(s,'Stable primary path restored; temporary allocation released',i['id'])
      resolve(s,i)
  snapshot(s)
