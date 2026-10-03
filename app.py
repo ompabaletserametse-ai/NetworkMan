@@ -103,6 +103,52 @@ h3 {
   text-transform: uppercase;
 }
 .subtle { color: var(--muted); font-size: 12px; }
+.kicker {
+  display: inline-block;
+  font-size: 10px;
+  letter-spacing: 1.6px;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 700;
+  margin-bottom: 0.25rem;
+}
+.action-card,
+.stack-card,
+.queue-card,
+.detail-panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: var(--shadow);
+  padding: 0.9rem 1rem;
+}
+.action-card {
+  background: linear-gradient(180deg, #fff 0%, #faf7f4 100%);
+}
+.stack-card {
+  padding: 0.8rem 0.9rem;
+}
+.queue-card {
+  padding: 0.8rem 0.9rem;
+  margin-bottom: 0.55rem;
+}
+.detail-panel { padding: 1rem; }
+.priority-list {
+  display: grid;
+  gap: 0.6rem;
+}
+.priority-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+  padding: 0.55rem 0.7rem;
+  border-radius: 10px;
+  background: var(--panel-soft);
+  border: 1px solid var(--line);
+}
+.priority-row strong { font-size: 0.9rem; }
+.priority-row small { color: var(--muted); }
 .badge {
   display: inline-block;
   padding: 3px 10px;
@@ -413,18 +459,25 @@ route=ss.route
 
 if route=='Overview':
  rows=selected_sites();active=[i for i in inc_rows() if i['state']!='Resolved']
- heading('Network overview',ss.province+' · Select a map marker to inspect its equipment')
+ heading('Network overview',ss.province+' · Operations summary')
  metrics([('Sites available',f"{sum(x['status']!='Unavailable' and x['fresh'] for x in rows)} / {len(rows)}",'Current reachable sites; stale sites excluded from numerator.'),('Degraded sites',sum(x['status']=='Degraded' for x in rows),''),('Network downtime',network_downtime_label(),'Unplanned downtime across the simulated 24h window from incident durations.'),('Active incidents',len(active),''),('Affected customers',f"{sum(x['affected'] for x in rows):,}",'Fictional non-overlapping customer groups.')])
- left,right=st.columns([1.6,1])
+ left,right=st.columns([1.6,1.05])
  with left:
   with st.container(border=True):
    st.subheader('Geographic health');map_view(rows,340)
    st.caption('Boundaries: geoBoundaries / OCHA ROSEA / South African Municipal Demarcation Board · CC BY 3.0 IGO')
  with right:
   with st.container(border=True):
-   st.subheader('Provincial health')
-   table([{'Province':p,'Available':f"{sum(x['fresh'] and x['status']!='Unavailable' for x in site_list(s,p))}/8",'Affected':sum(x['affected'] for x in site_list(s,p))} for p in PROVINCES],small=True)
- a,b=st.columns([4,1]);a.subheader('Priority incidents');b.button('All incidents →',on_click=go,args=('Incidents',))
+   st.subheader('Priority now')
+   priority=[{'id':i['id'],'title':i['title'],'site':i['site'],'severity':i['severity'],'customers':s['sites'][i['site']]['affected']} for i in sorted(active,key=lambda i:-s['sites'][i['site']]['affected'])[:3]]
+   if not priority:
+    st.caption('No active incidents in this scope.')
+   else:
+    for item in priority:
+     st.markdown(f'<div class="priority-row"><div><strong>{escape(item["id"])}</strong><br><small>{escape(item["site"])} · {escape(item["title"])}</small></div><div>{badge(item["severity"])}</div></div>',unsafe_allow_html=True)
+    st.caption(f"{priority[0]['customers']:,} customers affected at the highest active priority")
+    st.button('Open incidents →',on_click=go,args=('Incidents',),use_container_width=True)
+ a,b=st.columns([4,1]);a.subheader('Operational snapshot');b.button('All incidents →',on_click=go,args=('Incidents',))
  table([{'Incident':i['id'],'Issue':i['title'],'Site':i['site'],'Severity':i['severity'],'Customers':s['sites'][i['site']]['affected'],'State':i['state']} for i in sorted(active,key=lambda i:-s['sites'][i['site']]['affected'])[:2]],small=True)
  st.button('Search all sites →',on_click=go,args=('Sites',))
 
@@ -506,53 +559,68 @@ elif route in ['Incident detail','Recovery']:
  a,b,c=st.columns([1,1,3]);a.button('← Incidents',on_click=go,args=('Incidents',));b.button('Diagnosis' if route=='Recovery' else 'Recovery →',on_click=go,args=('Incident detail' if route=='Recovery' else 'Recovery',))
  metrics([('State',i['state'],''),('Affected customers',f"{site['affected']:,}",'Current simulated impact'),('Controller',i['controller'],''),('Priority service',site['priority'],'')])
  if route=='Incident detail':
-  a,b=st.columns(2)
+  a,b=st.columns([1.3,1])
   with a:
    with st.container(border=True):
     st.subheader('Likely cause');st.write(i['cause']);st.caption(i['method']+' · scripted demo output')
     st.write('**Evidence:** '+i['evidence']);st.write('**Alternatives:** '+i['alternatives']);st.caption(f"Illustrative confidence: {i['confidence']}% · not a calibrated model probability")
   with b:
    with st.container(border=True):
-    st.subheader('Site signals');l=s['links'][i['site']]
+    st.subheader('Current site signals');l=s['links'][i['site']]
     table([{'Signal':'Mains','Reading':'Available' if site['mains'] else 'Failed'},{'Signal':'Battery','Reading':fmt(site['charge'],'%')},{'Signal':'Backhaul','Reading':'Up' if l['up'] else 'Down'},{'Signal':'Security','Reading':'Suspected tampering' if i['scenario']=='Suspected tampering' else 'No alarm'}],True)
   st.subheader('Recent timeline');table(event_rows(i['id'])[:3],True)
-  a,b=st.columns(2)
-  with a:
-   if i['ticket']:st.button('Open maintenance ticket →',on_click=go,args=('Ticket detail',))
-  b.button('Full audit →',on_click=go,args=('Audit',))
+  action_row=st.columns([1,1,1])
+  if i['ticket']:action_row[0].button('Open maintenance ticket →',on_click=go,args=('Ticket detail',))
+  action_row[1].button('Recovery view →',on_click=go,args=('Recovery',))
+  action_row[2].button('Full audit →',on_click=go,args=('Audit',))
  else:
   p=plan(s,i);a,b=st.columns([1.3,1])
   with a:
-   st.subheader('Proposed response');st.write('**'+p['action']+'**');st.caption(p['reason'])
-   st.write(f"Alternate site: **{p['neighbor']}** · Spare: **{p['spare']:.0f} Mbps** · Required: **{p['need']} Mbps**")
-   st.caption('Alternative: retain current routing and dispatch an engineer. Radio coverage is not inferred from geographic proximity.')
-   x,y=st.columns(2);x.metric('Predicted affected after action',p['predicted']);y.metric('Observed in simulation',site['affected'])
-   a1,a2,a3=st.columns(3)
-   a1.button('Assess proposal',on_click=cmd,args=('assess',i['id']),disabled=i['state'] not in ['Assessing','Needs intervention'])
-   a2.button('Approve',on_click=cmd,args=('approve',i['id']),disabled=i['state']!='Awaiting approval' or bool(paused(s,i)) or not p['safe'])
-   a3.button('Reject',on_click=cmd,args=('reject',i['id']),disabled=i['state']!='Awaiting approval')
-   with st.form('modify'):
-    amount=st.number_input('Proposed traffic shift (Mbps)',100,400,i['desired'],50)
-    if st.form_submit_button('Update proposal',disabled=i['state'] not in ['Assessing','Awaiting approval','Needs intervention']):
-     i['desired']=amount;i['state']='Assessing';audit(s,f'Proposal modified: {amount} Mbps',i['id'],ss.engineer);st.rerun()
+   with st.container(border=True):
+    st.subheader('Proposed response');st.write('**'+p['action']+'**');st.caption(p['reason'])
+    st.write(f"Alternate site: **{p['neighbor']}** · Spare: **{p['spare']:.0f} Mbps** · Required: **{p['need']} Mbps**")
+    st.caption('Alternative: retain current routing and dispatch an engineer. Radio coverage is not inferred from geographic proximity.')
+    x,y=st.columns(2);x.metric('Predicted affected after action',p['predicted']);y.metric('Observed in simulation',site['affected'])
+    a1,a2,a3=st.columns(3)
+    a1.button('Assess proposal',on_click=cmd,args=('assess',i['id']),disabled=i['state'] not in ['Assessing','Needs intervention'])
+    a2.button('Approve',on_click=cmd,args=('approve',i['id']),disabled=i['state']!='Awaiting approval' or bool(paused(s,i)) or not p['safe'])
+    a3.button('Reject',on_click=cmd,args=('reject',i['id']),disabled=i['state']!='Awaiting approval')
+    with st.form('modify'):
+     amount=st.number_input('Proposed traffic shift (Mbps)',100,400,i['desired'],50)
+     if st.form_submit_button('Update proposal',disabled=i['state'] not in ['Assessing','Awaiting approval','Needs intervention']):
+      i['desired']=amount;i['state']='Assessing';audit(s,f'Proposal modified: {amount} Mbps',i['id'],ss.engineer);st.rerun()
   with b:
-   st.subheader('Operator control');st.caption(paused(s,i) or f"{i['risk']} risk · {i['stable']}/3 stability checks")
-   x,y=st.columns(2);x.button('Take manual control',on_click=cmd,args=('override',i['id']));y.button('Roll back',on_click=cmd,args=('rollback',i['id']),disabled=not i['before'])
-   with st.form('pause'):
-    x,y=st.columns(2);scope=x.selectbox('Pause scope',['Incident','Site','Province']);minutes=y.selectbox('Duration (minutes)',[5,15,30,60])
-    if st.form_submit_button('Pause automation'):
-     target={'Incident':i['id'],'Site':i['site'],'Province':site['province']}[scope];s['pauses'].append(dict(scope=target,until=s['minute']+minutes));audit(s,f'{scope} automation paused for {minutes} minutes',i['id'],ss.engineer);st.rerun()
-   confirm=st.checkbox('Confirm handover to automation')
-   st.button('Health check & hand back',on_click=cmd,args=('handover',i['id']),disabled=not confirm)
-   if st.button('EMERGENCY STOP',type='primary'):
-    s['stop']=True;audit(s,'Emergency stop: further automated actions blocked',i['id'],ss.engineer);st.rerun()
-   st.caption('Use Advance +5 minutes to execute and verify. Use Demo controls to release an emergency stop.')
+   with st.container(border=True):
+    st.subheader('Operator control');st.caption(paused(s,i) or f"{i['risk']} risk · {i['stable']}/3 stability checks")
+    x,y=st.columns(2);x.button('Take manual control',on_click=cmd,args=('override',i['id']));y.button('Roll back',on_click=cmd,args=('rollback',i['id']),disabled=not i['before'])
+    with st.form('pause'):
+     x,y=st.columns(2);scope=x.selectbox('Pause scope',['Incident','Site','Province']);minutes=y.selectbox('Duration (minutes)',[5,15,30,60])
+     if st.form_submit_button('Pause automation'):
+      target={'Incident':i['id'],'Site':i['site'],'Province':site['province']}[scope];s['pauses'].append(dict(scope=target,until=s['minute']+minutes));audit(s,f'{scope} automation paused for {minutes} minutes',i['id'],ss.engineer);st.rerun()
+    confirm=st.checkbox('Confirm handover to automation')
+    st.button('Health check & hand back',on_click=cmd,args=('handover',i['id']),disabled=not confirm)
+    if st.button('EMERGENCY STOP',type='primary'):
+     s['stop']=True;audit(s,'Emergency stop: further automated actions blocked',i['id'],ss.engineer);st.rerun()
+    st.caption('Use Advance +5 minutes to execute and verify. Use Demo controls to release an emergency stop.')
 
 elif route=='Tickets':
  heading('Field response','Faults requiring physical investigation or repair')
  rows=[t for t in s['tickets'].values() if ss.province=='All provinces' or s['sites'][t['site']]['province']==ss.province]
+ if rows:
+  summary_cols=st.columns(3)
+  summary_cols[0].metric('Open tickets',len(rows))
+  summary_cols[1].metric('Assigned',sum(t['owner']!='Unassigned' for t in rows))
+  summary_cols[2].metric('Critical',sum(s['incidents'][t['incident']]['severity']=='Critical' for t in rows))
  for t in paginate(rows,'tickets',5):
-  a,b,c,d=st.columns([3,2,2,1]);a.write(f"**{t['id']} · {t['site']}**");b.write(t['owner']);c.write(t['status']);d.button('Open →',key=t['id'],on_click=go,args=('Ticket detail',),kwargs={'incident':t['incident'],'site':t['site']})
+  i=s['incidents'][t['incident']]
+  a,b,c,d,e=st.columns([2.6,1.4,2.2,1.5,1])
+  a.markdown(f'<div class="queue-card"><div class="kicker">Ticket</div><strong>{escape(t["id"])}</strong><br><span class="subtle">{escape(t["site"])}</span></div>',unsafe_allow_html=True)
+  b.markdown(f'<div class="queue-card"><div class="kicker">Severity</div>{badge(i["severity"])}</div>',unsafe_allow_html=True)
+  c.markdown(f'<div class="queue-card"><div class="kicker">Status</div>{badge(t["status"])}</div>',unsafe_allow_html=True)
+  d.markdown(f'<div class="queue-card"><div class="kicker">Owner</div><span class="subtle">{escape(t["owner"])}</span></div>',unsafe_allow_html=True)
+  e.markdown('<div class="queue-card"><div class="kicker">Action</div></div>',unsafe_allow_html=True)
+  e.button('Open',key=t['id'],on_click=go,args=('Ticket detail',),kwargs={'incident':t['incident'],'site':t['site']},use_container_width=True)
+  st.caption(f'{i["title"]} · ETA: {t["eta"]} · {s["sites"][t["site"]]["province"]}')
  if not rows:st.info('No field tickets yet. Load a power failure, outage, or tampering scenario in Demo controls.')
 
 elif route=='Ticket detail':
