@@ -209,7 +209,9 @@ if 'pending_context' in ss:
  for k,v in ss.pop('pending_context').items():ss[k]=v
 s=ss.model
 maintenance.ensure(s)
-PAGES=['Overview','Issues & Response','Network Performance','Device Health','Incidents','Tickets','Maintenance','Reports']
+PRIMARY_PAGES=['Overview','Tickets']
+SECONDARY_PAGES=['Issues & Response','Network Performance','Device Health','Incidents','Maintenance','Reports']
+PAGES=PRIMARY_PAGES+SECONDARY_PAGES
 EXTRA=['Maintenance case','Technician findings','Maintenance watch','Preventive order','Issue detail','Issue analysis','Issue recommendation','Issue result','Sites','Link detail','Device detail','Incident detail','Recovery','Ticket detail','Audit','Demo controls']
 if ss.route not in PAGES+EXTRA:ss.route='Overview'
 
@@ -369,7 +371,7 @@ with st.sidebar:
  st.markdown('## ◈ NOC')
  st.caption('Observe · Understand · Recover')
  st.divider()
- for page in PAGES:
+ for page in PRIMARY_PAGES:
   st.button(page,key='nav_'+page,width='stretch',use_container_width=True,type='primary' if ss.route==page else 'secondary',on_click=go,args=(page,))
  st.divider()
  st.button('Demo controls',width='stretch',use_container_width=True,on_click=go,args=('Demo controls',))
