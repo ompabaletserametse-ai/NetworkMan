@@ -384,12 +384,11 @@ with st.sidebar:
  st.caption('All values and AI outputs are illustrative.')
 
 # Shared widgets render on every view, retaining context across navigation.
-a,b,c=st.columns([2,3,2])
+a,b=st.columns([2,3])
 a.selectbox('Province',['All provinces']+list(PROVINCES),key='province')
 options=[x['id'] for x in selected_sites()]
 if ss.site not in options:ss.site=options[0]
-b.selectbox('Site',options,key='site',format_func=lambda sid:f"{sid} · {s['sites'][sid]['name']}")
-c.markdown(f'<div style="padding-top:31px;text-align:right"><span class="badge">SIMULATED DATA</span> <span class="subtle">{now(s)} SAST</span></div>',unsafe_allow_html=True)
+b.markdown(f'<div style="padding-top:31px;text-align:right"><span class="badge">SIMULATED DATA</span> <span class="subtle">{now(s)} SAST</span></div>',unsafe_allow_html=True)
 if ss.get('notice'):
  st.caption(ss.pop('notice'))
 route=ss.route
