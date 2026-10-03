@@ -280,7 +280,13 @@ def network_downtime_label():
   start=incident.get('start')
   if start is None: continue
   end=incident.get('resolved', s['minute'])
-  total += max(0, end - start)
+  try:
+   start_val=int(start)
+   end_val=int(end)
+  except (TypeError, ValueError):
+   continue
+  if start_val is None or end_val is None: continue
+  total += max(0, end_val - start_val)
  if total < 60: return f'{total} min'
  hours, mins = divmod(total, 60)
  return f'{hours}h {mins}m' if hours else f'{mins}m'
