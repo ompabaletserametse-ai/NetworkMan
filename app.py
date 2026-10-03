@@ -274,6 +274,18 @@ def valid_links():return [s['links'][x['id']] for x in selected_sites() if s['li
 def fmt(value,unit='',digits=1):return 'No reading' if value is None else f'{value:.{digits}f}{unit}'
 
 
+def network_downtime_label():
+ total=0
+ for incident in s['incidents'].values():
+  start=incident.get('start')
+  if start is None: continue
+  end=incident.get('resolved', s['minute'])
+  total += max(0, end - start)
+ if total < 60: return f'{total} min'
+ hours, mins = divmod(total, 60)
+ return f'{hours}h {mins}m' if hours else f'{mins}m'
+
+
 def chart(points,label,height=235,threshold=None):
  from plotly import graph_objects as pg
  f=pg.Figure(pg.Scatter(x=[x[0] for x in points],y=[x[1] for x in points],mode='lines+markers',line=dict(color='#8a6347',width=2),marker=dict(size=4),connectgaps=False))
@@ -396,7 +408,7 @@ route=ss.route
 if route=='Overview':
  rows=selected_sites();active=[i for i in inc_rows() if i['state']!='Resolved']
  heading('Network overview',ss.province+' · Select a map marker to inspect its equipment')
- metrics([('Sites available',f"{sum(x['status']!='Unavailable' and x['fresh'] for x in rows)} / {len(rows)}",'Current reachable sites; stale sites excluded from numerator.'),('Degraded sites',sum(x['status']=='Degraded' for x in rows),''),('Active incidents',len(active),''),('Affected customers',f"{sum(x['affected'] for x in rows):,}",'Fictional non-overlapping customer groups.')])
+ metrics([('Sites available',f"{sum(x['status']!='Unavailable' and x['fresh'] for x in rows)} / {len(rows)}",'Current reachable sites; stale sites excluded from numerator.'),('Degraded sites',sum(x['status']=='Degraded' for x in rows),''),('Network downtime',network_downtime_label(),'Unplanned downtime across the simulated 24h window from incident durations.'),('Active incidents',len(active),''),('Affected customers',f"{sum(x['affected'] for x in rows):,}",'Fictional non-overlapping customer groups.')])
  left,right=st.columns([1.6,1])
  with left:
   with st.container(border=True):
