@@ -13,64 +13,188 @@ from model import PROVINCES, SCENARIOS, fresh_state, site_list, trigger, advance
 st.set_page_config(page_title='NOC · Network operations', page_icon='◈', layout='wide', initial_sidebar_state='expanded')
 CSS='''
 <style>
-:root {--brown:#3e3028;--line:#d8d2cb;}
-.stApp {background:#f2f0ed;color:#302b27;}
-[data-testid="stHeader"] {background:transparent;}
-[data-testid="stSidebar"] {background:#3e3028;min-width:220px;max-width:220px;}
-[data-testid="stSidebar"] * {color:#f7f4ef;}
-[data-testid="stSidebar"] button {background:#514137;border:1px solid #786459;text-align:left;}
-[data-testid="stSidebar"] button:hover {background:#725645;}
-[data-testid="stSidebar"] [data-testid="stSidebarUserContent"] {padding:1.2rem 1rem;}
-.block-container {padding:1.1rem 2rem 1rem;max-width:1900px;}
-[data-testid="stVerticalBlock"] {gap:.55rem;}
-h1 {font-size:2rem!important;padding:.1rem 0!important;letter-spacing:-.7px;}
-h2 {font-size:1.35rem!important;padding:.2rem 0!important;}
-h3 {font-size:1.05rem!important;padding:.15rem 0!important;}
-button {border-radius:7px!important;}
-[data-testid="stMetric"] {background:white;border:1px solid var(--line);border-radius:10px;padding:12px 16px;}
-[data-testid="stMetricValue"] {font-size:1.75rem;}
-[data-testid="stMetricLabel"] {font-size:.88rem;color:#76685e;}
-[data-testid="stElementContainer"]:has(.eyebrow) {margin-bottom:0;}
-.eyebrow {color:#80664f;font-size:12px;font-weight:700;letter-spacing:2px;}
-.subtle {color:#796d63;font-size:13px;}
-.panel {background:#fff;border:1px solid #d8d2cb;border-radius:10px;padding:15px 18px;margin:3px 0;}
-.badge {display:inline-block;padding:3px 9px;border-radius:20px;font-size:12px;font-weight:600;background:#e8ddd1;color:#574031;}
-.good {background:#e3efe7;color:#276746;}.warn {background:#fff0d6;color:#916011;}.bad {background:#f8e0dc;color:#a5372e;}.muted {background:#e8e5e1;color:#6e655f;}
-.grid-table {width:100%;border-collapse:collapse;font-size:14px;}
-.grid-table th {text-align:left;font-size:11px;letter-spacing:.6px;text-transform:uppercase;color:#857466;padding:9px;border-bottom:1px solid #ded8d1;}
-.grid-table td {padding:10px 9px;border-bottom:1px solid #ede9e3;}
-.small-table td {padding:7px 9px;}
-.rowtext {padding:8px 0;font-size:14px;}
-[data-testid="stHorizontalBlock"] {gap:1rem;}
-[data-testid="stForm"] {padding:12px;}
-[data-testid="stCaptionContainer"] p {font-size:12px;}
+:root {
+  --bg: #f5f1ee;
+  --panel: #ffffff;
+  --panel-soft: #faf7f4;
+  --ink: #2e2724;
+  --muted: #685d57;
+  --line: #e7dfd9;
+  --brand: #6c4d3d;
+  --brand-soft: #f0e6df;
+  --brand-strong: #3d2c26;
+  --green: #2e7d5a;
+  --amber: #b77d28;
+  --red: #b94d41;
+  --shadow: 0 10px 22px rgba(57, 39, 30, 0.05);
+}
 
-/* Consistent high-contrast light controls, including browser theme overrides. */
-.stApp {--text-color:#302b27;--background-color:#f2f0ed;--secondary-background-color:#ffffff;--primary-color:#745039;color-scheme:light;}
-[data-testid="stMain"] {color:#302b27!important;background:#f2f0ed!important;}
-[data-testid="stMain"] p, [data-testid="stMain"] label, [data-testid="stMain"] h1, [data-testid="stMain"] h2, [data-testid="stMain"] h3 {color:#302b27!important;}
-[data-testid="stCaptionContainer"] {opacity:1!important;}
-[data-testid="stMain"] [data-testid="stCaptionContainer"], [data-testid="stMain"] [data-testid="stCaptionContainer"] *, .subtle, .grid-table th {color:#61564d!important;opacity:1!important;-webkit-text-fill-color:#61564d!important;}
-[data-testid="stSidebar"] [data-testid="stCaptionContainer"], [data-testid="stSidebar"] [data-testid="stCaptionContainer"] * {color:#eee5da!important;opacity:1!important;-webkit-text-fill-color:#eee5da!important;}
-[data-testid="stMain"] [data-testid="stMetric"] {background:#fff!important;color:#302b27!important;}
-[data-testid="stMetricLabel"], [data-testid="stMetricValue"], [data-testid="stMetricValue"] div {color:#302b27!important;}
-[data-testid="stMain"] input, [data-testid="stMain"] textarea {color:#302b27!important;background:#fff!important;-webkit-text-fill-color:#302b27!important;caret-color:#302b27;}
-[data-testid="stMain"] [data-baseweb="input"], [data-testid="stMain"] [data-baseweb="textarea"] {background:#fff!important;color:#302b27!important;}
-[data-testid="stMain"] input::placeholder, [data-testid="stMain"] textarea::placeholder {color:#655b53!important;-webkit-text-fill-color:#655b53!important;opacity:1;}
-[data-testid="stMain"] [data-baseweb="select"]>div, [data-testid="stMain"] [data-baseweb="select"]>div>div {background:#fff!important;color:#302b27!important;}
-[data-baseweb="popover"] *, [data-baseweb="popover"], [data-baseweb="popover"] ul, [data-baseweb="popover"] li, [role="listbox"], [role="option"] {background:#fff!important;color:#302b27!important;}
-[role="option"]:hover,[aria-selected="true"][role="option"] {background:#e8ddd1!important;}
-[data-testid="stMain"] button {background:#fff!important;color:#3e3028!important;border:1px solid #ab9b8e!important;}
-[data-testid="stMain"] button p, [data-testid="stMain"] button span {color:inherit!important;}
-[data-testid="stMain"] button[kind="primary"] {background:#745039!important;color:#fff!important;}
-[data-testid="stMain"] button:disabled {background:#e3ddd5!important;color:#60554c!important;opacity:1!important;}
-[data-testid="stMain"] [data-testid="stForm"], [data-testid="stMain"] [data-testid="stVerticalBlockBorderWrapper"] {background:#fff;}
-[data-testid="stMain"] [data-testid="stAlert"] {background:#fff!important;color:#302b27!important;border:1px solid #ab9b8e;}
-[data-testid="stMain"] [data-testid="stCheckbox"] label, [data-testid="stMain"] [data-testid="stCheckbox"] span {color:#302b27!important;}
-[data-testid="stSidebar"] button[kind="primary"] {background:#e8ddd1!important;color:#3e3028!important;}
-[data-testid="stSidebar"] button[kind="primary"] p {color:#3e3028!important;}
-[data-testid="stMain"] svg {color:inherit;}
+.stApp {
+  background: linear-gradient(180deg, #f5f1ee 0%, #f8f4f2 100%);
+  color: var(--ink);
+  --text-color: var(--ink);
+  --background-color: var(--bg);
+  --secondary-background-color: var(--panel);
+  --primary-color: var(--brand);
+  color-scheme: light;
+}
 
+[data-testid="stHeader"] { background: transparent; }
+[data-testid="stSidebar"] {
+  background: linear-gradient(180deg, #3f302b 0%, #2e2724 100%);
+  min-width: 240px;
+  max-width: 240px;
+  border-right: 1px solid rgba(255,255,255,0.08);
+}
+[data-testid="stSidebar"] * { color: #f9f3ef; }
+[data-testid="stSidebar"] [data-testid="stSidebarUserContent"] { padding: 1.1rem 1rem; }
+[data-testid="stSidebar"] button {
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.09);
+  border-radius: 10px !important;
+  text-align: left;
+  margin-bottom: 0.35rem;
+  transition: all .15s ease;
+}
+[data-testid="stSidebar"] button:hover { background: rgba(255,255,255,0.08); }
+[data-testid="stSidebar"] button[kind="primary"] {
+  background: var(--brand-soft) !important;
+  color: var(--brand-strong) !important;
+  border-color: transparent !important;
+}
+
+.block-container {
+  padding: 1.2rem 1.7rem 1.4rem;
+  max-width: 1800px;
+}
+[data-testid="stVerticalBlock"] { gap: 0.7rem; }
+[data-testid="stHorizontalBlock"] { gap: 1rem; }
+[data-testid="stForm"] { padding: 0.8rem; border-radius: 12px; }
+[data-testid="stMetric"] {
+  background: var(--panel) !important;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: var(--shadow);
+  padding: 12px 14px;
+}
+[data-testid="stMetricValue"] { font-size: 1.8rem; }
+[data-testid="stMetricLabel"] { font-size: .82rem; color: var(--muted) !important; }
+
+h1 {
+  font-size: 2.2rem !important;
+  letter-spacing: -0.7px;
+  margin: 0.15rem 0 0.35rem !important;
+}
+h2 {
+  font-size: 1.4rem !important;
+  margin: 0.25rem 0 0.35rem !important;
+}
+h3 {
+  font-size: 1.08rem !important;
+  margin: 0.2rem 0 0.25rem !important;
+}
+
+.eyebrow {
+  color: var(--brand);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 2.4px;
+  margin-bottom: 0.15rem;
+  text-transform: uppercase;
+}
+.subtle { color: var(--muted); font-size: 13px; }
+.badge {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  background: #efe7e2;
+  color: var(--brand-strong);
+}
+.good { background: #e5f1eb; color: var(--green); }
+.warn { background: #fdf0d8; color: var(--amber); }
+.bad { background: #f8e0de; color: var(--red); }
+.muted { background: #ece7e3; color: var(--muted); }
+
+.grid-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+}
+.grid-table th {
+  text-align: left;
+  font-size: 11px;
+  letter-spacing: .7px;
+  text-transform: uppercase;
+  color: var(--muted);
+  background: var(--panel-soft);
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.grid-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+.small-table td { padding: 8px 10px; }
+.rowtext { padding: 0.4rem 0; font-size: 14px; }
+
+button {
+  border-radius: 10px !important;
+  transition: transform .1s ease, box-shadow .1s ease;
+}
+button:hover { transform: translateY(-1px); }
+[data-testid="stMain"] button {
+  background: #fff !important;
+  color: var(--ink) !important;
+  border: 1px solid #c9b9ae !important;
+}
+[data-testid="stMain"] button[kind="primary"] {
+  background: var(--brand) !important;
+  color: #fff !important;
+  border-color: var(--brand) !important;
+}
+[data-testid="stMain"] button:disabled {
+  background: #f1ece9 !important;
+  color: #766d69 !important;
+  opacity: 1 !important;
+}
+
+[data-testid="stMain"] [data-testid="stVerticalBlockBorderWrapper"],
+[data-testid="stMain"] [data-testid="stForm"],
+[data-testid="stMain"] [data-testid="stAlert"] {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: var(--shadow);
+}
+
+[data-testid="stMain"] .stAlert {
+  background: var(--panel) !important;
+  border: 1px solid var(--line) !important;
+  color: var(--ink) !important;
+}
+
+[data-testid="stMain"] input,
+[data-testid="stMain"] textarea,
+[data-testid="stMain"] [data-baseweb="select"] > div,
+[data-testid="stMain"] [data-baseweb="input"] {
+  background: #fff !important;
+  color: var(--ink) !important;
+  border-radius: 9px !important;
+}
+[data-baseweb="popover"] *, [role="option"] { color: var(--ink) !important; }
+[role="option"]:hover, [aria-selected="true"][role="option"] { background: #efe5df !important; }
+
+[data-testid="stSidebar"] .stCaptionContainer, [data-testid="stSidebar"] .stCaptionContainer * { color: #f5eee8 !important; }
+[data-testid="stMain"] [data-testid="stCaptionContainer"],
+[data-testid="stMain"] .subtle,
+[data-testid="stMain"] .grid-table th { color: var(--muted) !important; }
+[data-testid="stMain"] svg { color: inherit; }
 </style>'''
 st.markdown(CSS,unsafe_allow_html=True)
 ss=st.session_state
@@ -128,6 +252,7 @@ def heading(title,subtitle=''):
  st.markdown('<div class="eyebrow">NETWORK OPERATIONS CENTRE</div>',unsafe_allow_html=True)
  st.title(title)
  if subtitle:st.caption(subtitle)
+ st.markdown('<div style="height: 0.2rem"></div>',unsafe_allow_html=True)
 
 
 def paginate(rows,key,size=6):
@@ -245,14 +370,15 @@ with st.sidebar:
  st.caption('Observe · Understand · Recover')
  st.divider()
  for page in PAGES:
-  st.button(page,key='nav_'+page,width='stretch',type='primary' if ss.route==page else 'secondary',on_click=go,args=(page,))
+  st.button(page,key='nav_'+page,width='stretch',use_container_width=True,type='primary' if ss.route==page else 'secondary',on_click=go,args=(page,))
  st.divider()
- st.button('Demo controls',width='stretch',on_click=go,args=('Demo controls',))
+ st.button('Demo controls',width='stretch',use_container_width=True,on_click=go,args=('Demo controls',))
  st.caption(f'SIMULATION CLOCK · {now(s)} SAST')
- st.button('Advance +5 minutes',width='stretch',on_click=advance,args=(s,))
+ st.button('Advance +5 minutes',width='stretch',use_container_width=True,on_click=advance,args=(s,))
  if s['stop']:
   st.error('Emergency stop active')
- else:st.caption('Session-local simulated operations')
+ else:
+  st.caption('Session-local simulated operations')
  st.caption('All values and AI outputs are illustrative.')
 
 # Shared widgets render on every view, retaining context across navigation.
