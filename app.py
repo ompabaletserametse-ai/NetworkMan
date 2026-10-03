@@ -64,45 +64,45 @@ CSS='''
 }
 
 .block-container {
-  padding: 1.2rem 1.7rem 1.4rem;
+  padding: 0.8rem 1.3rem 0.9rem;
   max-width: 1800px;
 }
-[data-testid="stVerticalBlock"] { gap: 0.7rem; }
-[data-testid="stHorizontalBlock"] { gap: 1rem; }
-[data-testid="stForm"] { padding: 0.8rem; border-radius: 12px; }
+[data-testid="stVerticalBlock"] { gap: 0.45rem; }
+[data-testid="stHorizontalBlock"] { gap: 0.75rem; }
+[data-testid="stForm"] { padding: 0.6rem; border-radius: 12px; }
 [data-testid="stMetric"] {
   background: var(--panel) !important;
   border: 1px solid var(--line);
-  border-radius: 14px;
+  border-radius: 12px;
   box-shadow: var(--shadow);
-  padding: 12px 14px;
+  padding: 10px 12px;
 }
-[data-testid="stMetricValue"] { font-size: 1.8rem; }
-[data-testid="stMetricLabel"] { font-size: .82rem; color: var(--muted) !important; }
+[data-testid="stMetricValue"] { font-size: 1.55rem; }
+[data-testid="stMetricLabel"] { font-size: .76rem; color: var(--muted) !important; }
 
 h1 {
-  font-size: 2.2rem !important;
+  font-size: 2rem !important;
   letter-spacing: -0.7px;
-  margin: 0.15rem 0 0.35rem !important;
+  margin: 0.1rem 0 0.2rem !important;
 }
 h2 {
-  font-size: 1.4rem !important;
-  margin: 0.25rem 0 0.35rem !important;
+  font-size: 1.25rem !important;
+  margin: 0.15rem 0 0.2rem !important;
 }
 h3 {
-  font-size: 1.08rem !important;
-  margin: 0.2rem 0 0.25rem !important;
+  font-size: 1.02rem !important;
+  margin: 0.12rem 0 0.18rem !important;
 }
 
 .eyebrow {
   color: var(--brand);
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 700;
-  letter-spacing: 2.4px;
-  margin-bottom: 0.15rem;
+  letter-spacing: 2.2px;
+  margin-bottom: 0.08rem;
   text-transform: uppercase;
 }
-.subtle { color: var(--muted); font-size: 13px; }
+.subtle { color: var(--muted); font-size: 12px; }
 .badge {
   display: inline-block;
   padding: 3px 10px;
@@ -127,21 +127,21 @@ h3 {
 }
 .grid-table th {
   text-align: left;
-  font-size: 11px;
-  letter-spacing: .7px;
+  font-size: 10px;
+  letter-spacing: .6px;
   text-transform: uppercase;
   color: var(--muted);
   background: var(--panel-soft);
-  padding: 10px 12px;
+  padding: 8px 10px;
   border-bottom: 1px solid var(--line);
 }
 .grid-table td {
-  padding: 10px 12px;
+  padding: 8px 10px;
   border-bottom: 1px solid var(--line);
   vertical-align: top;
 }
-.small-table td { padding: 8px 10px; }
-.rowtext { padding: 0.4rem 0; font-size: 14px; }
+.small-table td { padding: 6px 8px; }
+.rowtext { padding: 0.25rem 0; font-size: 13px; }
 
 button {
   border-radius: 10px !important;
